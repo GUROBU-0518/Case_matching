@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Project } from "../domain/schemas.js";
 
 const defaultPort = 3000;
 
@@ -12,35 +13,50 @@ interface ProjectListItem {
   readonly requiredSkills: readonly string[];
 }
 
-type ProjectsViewState = "ready" | "empty" | "loading" | "error";
+type ApiProject = Project & { readonly id: string };
 
-const mockProjects: readonly ProjectListItem[] = [
+const mockProjects: readonly ApiProject[] = [
   {
     id: "p-001",
-    name: "基幹システム刷新支援",
+    projectName: "基幹システム刷新支援",
     summary: "既存業務システムの画面改修とAPI連携を段階的に進める案件です。",
-    location: "東京 / リモート併用",
+    requiredSkills: ["TypeScript", "Node.js", "PostgreSQL"],
     rate: "70万円前後",
+    location: "東京 / リモート併用",
+    workStyle: "リモート併用",
     startDate: "2026-11",
-    requiredSkills: ["TypeScript", "Node.js", "PostgreSQL"]
+    headcount: 2,
+    process: "基本設計からテスト",
+    commercialRestrictions: null,
+    sourceText: "T05-02用の架空案件データです。"
   },
   {
     id: "p-002",
-    name: "社内データ活用基盤構築",
+    projectName: "社内データ活用基盤構築",
     summary: "複数部門のデータを整理し、検索・集計しやすい形へ整える案件です。",
-    location: "品川",
+    requiredSkills: ["SQL", "Prisma", "バッチ処理"],
     rate: "75万円前後",
+    location: "品川",
+    workStyle: "常駐",
     startDate: "2026-12",
-    requiredSkills: ["SQL", "Prisma", "バッチ処理"]
+    headcount: 1,
+    process: "詳細設計から運用設計",
+    commercialRestrictions: "商流確認中",
+    sourceText: "T05-02用の架空案件データです。"
   },
   {
     id: "p-003",
-    name: "顧客管理Webアプリ改善",
+    projectName: "顧客管理Webアプリ改善",
     summary: "認証後の業務画面と一覧表示を中心に改善するフロント寄りの案件です。",
-    location: "フルリモート",
+    requiredSkills: ["HTML", "CSS", "アクセシビリティ"],
     rate: "65万円前後",
+    location: "フルリモート",
+    workStyle: "フルリモート",
     startDate: "即日",
-    requiredSkills: ["HTML", "CSS", "アクセシビリティ"]
+    headcount: 1,
+    process: "製造からテスト",
+    commercialRestrictions: null,
+    sourceText: "T05-02用の架空案件データです。"
   }
 ];
 
@@ -317,86 +333,86 @@ function pageShell(title: string, body: string): string {
 </html>`;
 }
 
-function normalizeProjectsState(value: string | null): ProjectsViewState {
-  if (value === "empty" || value === "loading" || value === "error") {
-    return value;
-  }
-
-  return "ready";
-}
-
-function renderProjectsContent(state: ProjectsViewState): string {
-  if (state === "loading") {
-    return `
-      <div class="state-box" role="status" aria-live="polite">
-        <div>
-          <strong>読み込み中です</strong>
-          <span>案件一覧を取得している想定の表示です。</span>
-        </div>
-      </div>
-    `;
-  }
-
-  if (state === "error") {
-    return `
-      <div class="state-box" role="alert">
-        <div>
-          <strong>案件一覧を表示できません</strong>
-          <span>取得失敗時の表示です。今回は実APIには接続していません。</span>
-        </div>
-      </div>
-    `;
-  }
-
-  if (state === "empty") {
-    return `
-      <div class="state-box">
-        <div>
-          <strong>表示できる案件がありません</strong>
-          <span>条件に合う案件が0件の場合の表示です。</span>
-        </div>
-      </div>
-    `;
-  }
-
-  const projectCards = mockProjects.map((project) => `
-    <article class="project-card">
-      <div>
-        <h2>${escapeHtml(project.name)}</h2>
-        <p>${escapeHtml(project.summary)}</p>
-        <ul class="meta">
-          <li>${escapeHtml(project.location)}</li>
-          <li>${escapeHtml(project.rate)}</li>
-          <li>${escapeHtml(project.startDate)}</li>
-        </ul>
-      </div>
-      <div class="skills" aria-label="${escapeHtml(project.name)}の必須スキル">
-        ${project.requiredSkills.map((skill) => `<span class="skill">${escapeHtml(skill)}</span>`).join("")}
-      </div>
-    </article>
-  `).join("");
-
-  return `<div class="project-grid">${projectCards}</div>`;
-}
-
-function renderProjectsPage(state: ProjectsViewState): string {
+function renderProjectsPage(): string {
   return pageShell("案件一覧", `
     <section class="panel">
       <div class="toolbar">
         <div>
           <h1 class="page-title">案件一覧</h1>
-          <p class="lead">T05-01 用の架空案件を一覧表示しています。</p>
-          <div class="state-links" aria-label="表示状態の確認">
-            <a href="/projects">通常</a>
-            <a href="/projects?state=empty">0件</a>
-            <a href="/projects?state=loading">読み込み中</a>
-            <a href="/projects?state=error">エラー</a>
+          <p class="lead">案件取得APIから取得した案件を表示します。</p>
+        </div>
+      </div>
+      <p class="notice">認証、実DB接続、マッチング画面への移動は今回の対象外です。</p>
+      <div id="projects-root" class="project-grid">
+        <div class="state-box" role="status" aria-live="polite">
+          <div>
+            <strong>読み込み中です</strong>
+            <span>案件取得APIへ接続しています。</span>
           </div>
         </div>
       </div>
-      <p class="notice">認証、実DB接続、案件取得API、マッチング画面への移動は今回の対象外です。</p>
-      ${renderProjectsContent(state)}
     </section>
+    <script>
+      const projectsRoot = document.querySelector("#projects-root");
+      const searchParams = new URLSearchParams(window.location.search);
+      const apiState = searchParams.get("apiState");
+      const apiUrl = apiState ? "/api/projects?state=" + encodeURIComponent(apiState) : "/api/projects";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function renderState(title, message, role = "") {
+        projectsRoot.className = "project-grid";
+        projectsRoot.innerHTML =
+          '<div class="state-box"' + (role ? ' role="' + role + '"' : "") + ">" +
+            "<div><strong>" + escapeHtml(title) + "</strong><span>" + escapeHtml(message) + "</span></div>" +
+          "</div>";
+      }
+
+      function renderProjects(projects) {
+        if (projects.length === 0) {
+          renderState("表示できる案件がありません", "DBまたはAPIから0件が返りました。");
+          return;
+        }
+
+        projectsRoot.className = "project-grid";
+        projectsRoot.innerHTML = projects.map((project) => {
+          const skills = Array.isArray(project.requiredSkills) ? project.requiredSkills : [];
+          return '<article class="project-card">' +
+            "<div>" +
+              "<h2>" + escapeHtml(project.name) + "</h2>" +
+              "<p>" + escapeHtml(project.summary) + "</p>" +
+              '<ul class="meta">' +
+                "<li>" + escapeHtml(project.location) + "</li>" +
+                "<li>" + escapeHtml(project.rate) + "</li>" +
+                "<li>" + escapeHtml(project.startDate) + "</li>" +
+              "</ul>" +
+            "</div>" +
+            '<div class="skills" aria-label="' + escapeHtml(project.name) + 'の必須スキル">' +
+              skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("") +
+            "</div>" +
+          "</article>";
+        }).join("");
+      }
+
+      fetch(apiUrl, { headers: { accept: "application/json" } })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error("API request failed");
+          }
+          return response.json();
+        })
+        .then((data) => renderProjects(Array.isArray(data.projects) ? data.projects : []))
+        .catch(() => {
+          renderState("案件一覧を表示できません", "API通信またはDB接続で失敗した場合の表示です。", "alert");
+        });
+    </script>
   `);
 }
 
@@ -408,12 +424,73 @@ function sendHtml(response: ServerResponse, statusCode: number, html: string): v
   response.end(html);
 }
 
+function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  response.end(JSON.stringify(body));
+}
+
+function projectSummary(project: ApiProject): ProjectListItem {
+  return {
+    id: project.id,
+    name: project.projectName ?? "案件名未設定",
+    summary: project.summary ?? "概要未設定",
+    location: project.location ?? "勤務地未設定",
+    rate: project.rate ?? "単価未設定",
+    startDate: project.startDate ?? "開始時期未設定",
+    requiredSkills: project.requiredSkills ?? []
+  };
+}
+
+function handleProjectsApi(url: URL, response: ServerResponse): void {
+  if (url.searchParams.get("state") === "error") {
+    sendJson(response, 503, {
+      error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
+    });
+    return;
+  }
+
+  const projects = url.searchParams.get("state") === "empty" ? [] : mockProjects.map(projectSummary);
+  sendJson(response, 200, { projects });
+}
+
+function handleProjectByIdApi(id: string, url: URL, response: ServerResponse): void {
+  if (url.searchParams.get("state") === "error") {
+    sendJson(response, 503, {
+      error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
+    });
+    return;
+  }
+
+  const project = mockProjects.find((item) => item.id === id);
+
+  if (!project) {
+    sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+    return;
+  }
+
+  sendJson(response, 200, { project });
+}
+
 function handleRequest(request: IncomingMessage, response: ServerResponse): void {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (request.method !== "GET") {
     response.writeHead(405, { allow: "GET" });
     response.end("Method Not Allowed");
+    return;
+  }
+
+  if (url.pathname === "/api/projects") {
+    handleProjectsApi(url, response);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/projects/")) {
+    const id = decodeURIComponent(url.pathname.slice("/api/projects/".length));
+    handleProjectByIdApi(id, url, response);
     return;
   }
 
@@ -424,7 +501,7 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
   }
 
   if (url.pathname === "/projects") {
-    sendHtml(response, 200, renderProjectsPage(normalizeProjectsState(url.searchParams.get("state"))));
+    sendHtml(response, 200, renderProjectsPage());
     return;
   }
 
