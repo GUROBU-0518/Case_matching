@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  // ID生成方式はSTEP3終了後に正式決定
+  id                     String   @id
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+  projectName            String?  @map("project_name")
+  summary                String?
+  // 情報なしはNULLではなく空配列で扱う
+  requiredSkills         String[] @map("required_skills")
+  rate                   String?
+  location               String?
+  workStyle              String?  @map("work_style")
+  startDate              String?  @map("start_date")
+  headcount              Int?
+  process                String?
+  commercialRestrictions String?  @map("commercial_restrictions")
+  sourceText             String?  @map("source_text")
+
+  @@map("projects")
+}
+
+model Talent {
+  // ID生成方式はSTEP3終了後に正式決定
+  id               String   @id
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  nameOrInitial    String?  @map("name_or_initial")
+  // 情報なしはNULLではなく空配列で扱う
+  technicalSkills  String[] @map("technical_skills")
+  desiredRate      String?  @map("desired_rate")
+  nearestStation   String?  @map("nearest_station")
+  desiredWorkStyle String?  @map("desired_work_style")
+  availableFrom    String?  @map("available_from")
+  // 情報なしはNULLではなく空配列で扱う
+  availableProcess String[] @map("available_process")
+  // 所属はアプリケーション側でBP固定
+  affiliation      String   @default("BP")
+  sourceText       String?  @map("source_text")
+
+  @@map("talents")
+}

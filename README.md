@@ -42,3 +42,28 @@ npm ci
 ```
 
 依存関係の再現には`npm install`ではなく、lockファイルを使う`npm ci`を使用してください。認証情報や実データを追加せず、エラー内容とNode.js/npmのバージョンを共有してください。
+
+## PostgreSQL / Prisma（T02 STEP 1）
+
+PostgreSQL 16以上をWindowsへインストールし、開発専用のDBとユーザーを作成します。既存のDBを削除・初期化しないでください。例：
+
+```sql
+CREATE USER case_matching_dev WITH PASSWORD 'change-me';
+CREATE DATABASE case_matching_dev OWNER case_matching_dev;
+```
+
+実際のパスワードは`.env`だけに保存し、`DATABASE_URL`を次の形式で設定します。
+
+```text
+postgresql://case_matching_dev:<password>@localhost:5432/case_matching_dev?schema=public
+```
+
+Prismaの設定確認とClient生成は次で行います。
+
+```powershell
+npm ci
+npm run db:validate
+npm run db:generate
+```
+
+現段階では業務テーブルやマイグレーションは作成しません。PostgreSQLが起動している環境で、接続確認コードから`SELECT 1`を実行してDB接続を確認します。
