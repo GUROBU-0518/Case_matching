@@ -327,6 +327,44 @@ function pageShell(title: string, body: string): string {
       color: var(--muted);
     }
 
+    .matching-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    .matching-panel {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+    }
+
+    .matching-panel h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .matching-panel p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .matching-placeholder {
+      display: grid;
+      min-height: 132px;
+      place-items: center;
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px dashed var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--muted);
+      text-align: center;
+    }
+
     .meta {
       display: flex;
       flex-wrap: wrap;
@@ -386,6 +424,10 @@ function pageShell(title: string, body: string): string {
       }
 
       .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .matching-layout {
         grid-template-columns: 1fr;
       }
     }
@@ -528,6 +570,18 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
         <h2>マッチング結果</h2>
         <p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p>
       </section>
+      <div class="matching-layout">
+        <section class="matching-panel" aria-labelledby="talent-list-heading">
+          <h2 id="talent-list-heading">人材一覧</h2>
+          <p>案件にマッチする人材を一覧で確認する領域です。</p>
+          <div class="matching-placeholder">人材一覧は未実装です。</div>
+        </section>
+        <section class="matching-panel" aria-labelledby="talent-detail-heading">
+          <h2 id="talent-detail-heading">人材詳細</h2>
+          <p>選択した人材の詳細を表示する領域です。</p>
+          <div class="matching-placeholder">人材を選択すると詳細が表示されます。</div>
+        </section>
+      </div>
     </section>
   `);
 }
