@@ -261,6 +261,72 @@ function pageShell(title: string, body: string): string {
       color: var(--muted);
     }
 
+    .project-actions {
+      display: flex;
+      align-items: center;
+      justify-content: end;
+      margin-top: 16px;
+    }
+
+    .button,
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .button:hover,
+    .back-link:hover {
+      background: #1d4ed8;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 24px 0;
+    }
+
+    .detail-item {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .detail-item dt {
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .detail-item dd {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    .detail-section {
+      margin-top: 24px;
+    }
+
+    .detail-section h2 {
+      margin-bottom: 10px;
+      font-size: 18px;
+    }
+
+    .detail-section p {
+      margin: 0;
+      color: var(--muted);
+    }
+
     .meta {
       display: flex;
       flex-wrap: wrap;
@@ -317,6 +383,10 @@ function pageShell(title: string, body: string): string {
       .skills {
         justify-content: start;
         min-width: 0;
+      }
+
+      .detail-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -397,6 +467,7 @@ function renderProjectsPage(): string {
             '<div class="skills" aria-label="' + escapeHtml(project.name) + 'の必須スキル">' +
               skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("") +
             "</div>" +
+            '<div class="project-actions"><a class="button" href="/projects/' + encodeURIComponent(project.id) + '/matches">この案件を選択</a></div>' +
           "</article>";
         }).join("");
       }
@@ -413,6 +484,51 @@ function renderProjectsPage(): string {
           renderState("案件一覧を表示できません", "API通信またはDB接続で失敗した場合の表示です。", "alert");
         });
     </script>
+  `);
+}
+
+function displayValue(value: string | number | null): string {
+  return value === null ? "未設定" : String(value);
+}
+
+function renderProjectMatchesPage(project: ApiProject | undefined, id: string): string {
+  if (!project) {
+    return pageShell("案件が見つかりません", `
+      <section class="panel">
+        <h1 class="page-title">案件が見つかりません</h1>
+        <p class="lead">案件ID「${id}」に対応する案件は存在しません。</p>
+        <p class="project-actions"><a class="back-link" href="/projects">案件一覧へ戻る</a></p>
+      </section>
+    `);
+  }
+
+  const skills = project.requiredSkills ?? [];
+  const skillMarkup = skills.length > 0
+    ? skills.map((skill) => `<span class="skill">${skill}</span>`).join("")
+    : "<span>未設定</span>";
+
+  return pageShell(`${project.projectName ?? "案件詳細"}のマッチング`, `
+    <section class="panel">
+      <p><a class="back-link" href="/projects">← 案件一覧へ戻る</a></p>
+      <h1 class="page-title">${project.projectName ?? "案件名未設定"}</h1>
+      <p class="lead">${project.summary ?? "概要未設定"}</p>
+      <dl class="detail-grid">
+        <div class="detail-item"><dt>勤務地</dt><dd>${displayValue(project.location)}</dd></div>
+        <div class="detail-item"><dt>単価</dt><dd>${displayValue(project.rate)}</dd></div>
+        <div class="detail-item"><dt>勤務形態</dt><dd>${displayValue(project.workStyle)}</dd></div>
+        <div class="detail-item"><dt>開始時期</dt><dd>${displayValue(project.startDate)}</dd></div>
+        <div class="detail-item"><dt>募集人数</dt><dd>${displayValue(project.headcount)}</dd></div>
+        <div class="detail-item"><dt>工程</dt><dd>${displayValue(project.process)}</dd></div>
+      </dl>
+      <section class="detail-section">
+        <h2>必須スキル</h2>
+        <div class="skills" aria-label="必須スキル">${skillMarkup}</div>
+      </section>
+      <section class="detail-section">
+        <h2>マッチング結果</h2>
+        <p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p>
+      </section>
+    </section>
   `);
 }
 
@@ -502,6 +618,19 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
 
   if (url.pathname === "/projects") {
     sendHtml(response, 200, renderProjectsPage());
+    return;
+  }
+
+  const matchesRoute = /^\/projects\/([^/]+)\/matches$/.exec(url.pathname);
+  if (matchesRoute) {
+    const encodedId = matchesRoute[1];
+    if (!encodedId) {
+      sendHtml(response, 404, renderProjectMatchesPage(undefined, ""));
+      return;
+    }
+    const id = decodeURIComponent(encodedId);
+    const project = mockProjects.find((item) => item.id === id);
+    sendHtml(response, project ? 200 : 404, renderProjectMatchesPage(project, id));
     return;
   }
 
