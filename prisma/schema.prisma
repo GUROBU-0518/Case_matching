@@ -9,82 +9,105 @@ datasource db {
 
 model Project {
   // ID生成方式はSTEP3終了後に正式決定
-  id                     String   @id
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @updatedAt @map("updated_at")
-  projectName            String?  @map("project_name")
+  id                     String       @id
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+  projectName            String?      @map("project_name")
   summary                String?
   // 情報なしはNULLではなく空配列で扱う
-  requiredSkills         String[] @map("required_skills")
+  requiredSkills         String[]     @map("required_skills")
   rate                   String?
   location               String?
-  workStyle              String?  @map("work_style")
-  startDate              String?  @map("start_date")
+  workStyle              String?      @map("work_style")
+  startDate              String?      @map("start_date")
   headcount              Int?
   process                String?
-  commercialRestrictions String?  @map("commercial_restrictions")
-  sourceText             String?  @map("source_text")
+  commercialRestrictions String?      @map("commercial_restrictions")
+  sourceText             String?      @map("source_text")
+  // 1メールから複数Projectが生成される可能性がある。メール以外から登録される可能性があるためNULL許可。
+  mailMessageId          String?      @map("mail_message_id")
+  mailMessage            MailMessage? @relation(fields: [mailMessageId], references: [id])
+  // mailMessageIdの明示IndexはRelationによるIndexで十分かをSTEP5以降で確認する。
 
   @@map("projects")
 }
 
 model Talent {
   // ID生成方式はSTEP3終了後に正式決定
-  id               String   @id
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
-  nameOrInitial    String?  @map("name_or_initial")
+  id               String       @id
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  nameOrInitial    String?      @map("name_or_initial")
   // 情報なしはNULLではなく空配列で扱う
-  technicalSkills  String[] @map("technical_skills")
-  desiredRate      String?  @map("desired_rate")
-  nearestStation   String?  @map("nearest_station")
-  desiredWorkStyle String?  @map("desired_work_style")
-  availableFrom    String?  @map("available_from")
+  technicalSkills  String[]     @map("technical_skills")
+  desiredRate      String?      @map("desired_rate")
+  nearestStation   String?      @map("nearest_station")
+  desiredWorkStyle String?      @map("desired_work_style")
+  availableFrom    String?      @map("available_from")
   // 情報なしはNULLではなく空配列で扱う
-  availableProcess String[] @map("available_process")
+  availableProcess String[]     @map("available_process")
   // 所属はアプリケーション側でBP固定
-  affiliation      String   @default("BP")
-  sourceText       String?  @map("source_text")
+  affiliation      String       @default("BP")
+  sourceText       String?      @map("source_text")
+  // 1メールから複数Talentが生成される可能性がある。メール以外から登録される可能性があるためNULL許可。
+  mailMessageId    String?      @map("mail_message_id")
+  mailMessage      MailMessage? @relation(fields: [mailMessageId], references: [id])
+  // mailMessageIdの明示IndexはRelationによるIndexで十分かをSTEP5以降で確認する。
 
   @@map("talents")
 }
 
 model MailMessage {
   // ID生成方式はSTEP4以降で正式決定
-  id             String    @id
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-  graphMessageId String    @map("graph_message_id")
-  mailboxId      String    @map("mailbox_id")
-  folderId       String?   @map("folder_id")
+  id             String        @id
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  graphMessageId String        @map("graph_message_id")
+  mailboxId      String        @map("mailbox_id")
+  folderId       String?       @map("folder_id")
   subject        String?
   // 送信者識別用。画面表示しない。検索条件にしない。内部管理用途のみ。
-  senderAddress  String?   @map("sender_address")
+  senderAddress  String?       @map("sender_address")
   // Graph上の受信日時
-  receivedAt     DateTime? @map("received_at")
-  graphUpdatedAt DateTime? @map("graph_updated_at")
+  receivedAt     DateTime?     @map("received_at")
+  graphUpdatedAt DateTime?     @map("graph_updated_at")
   // Graphから取得した日時
-  fetchedAt      DateTime  @map("fetched_at")
-  sourceInfo     String?   @map("source_info")
+  fetchedAt      DateTime      @map("fetched_at")
+  sourceInfo     String?       @map("source_info")
+  // onDeleteはSTEP5以降でCascade/Restrict/SetNull/NoActionを検討する。
+  projects       Project[]
+  talents        Talent[]
+  aiProcessing   AiProcessing?
 
+  // Graphメールの重複防止と複数メールボックス対応のため
+  @@unique([mailboxId, graphMessageId])
+  @@index([graphMessageId])
+  @@index([mailboxId])
+  @@index([receivedAt])
   @@map("mail_messages")
 }
 
 model AiProcessing {
   // ID生成方式はSTEP4以降で正式決定
-  id                  String    @id
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
-  graphMessageId      String    @map("graph_message_id")
+  id                  String       @id
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+  graphMessageId      String       @map("graph_message_id")
+  // 将来的にmailMessageIdへ完全移行できる場合は削除候補
   status              String
-  startedAt           DateTime? @map("started_at")
-  endedAt             DateTime? @map("ended_at")
-  errorType           String?   @map("error_type")
-  errorMessage        String?   @map("error_message")
-  retryCount          Int       @default(0) @map("retry_count")
-  lastRetriedAt       DateTime? @map("last_retried_at")
-  zodValidationStatus String?   @map("zod_validation_status")
+  startedAt           DateTime?    @map("started_at")
+  endedAt             DateTime?    @map("ended_at")
+  errorType           String?      @map("error_type")
+  errorMessage        String?      @map("error_message")
+  retryCount          Int          @default(0) @map("retry_count")
+  lastRetriedAt       DateTime?    @map("last_retried_at")
+  zodValidationStatus String?      @map("zod_validation_status")
+  // MVPでは1メール1処理。再処理はretryCount更新方式。
+  mailMessageId       String?      @unique @map("mail_message_id")
+  mailMessage         MailMessage? @relation(fields: [mailMessageId], references: [id])
 
+  @@index([status])
+  @@index([graphMessageId])
   @@map("ai_processings")
 }
 
