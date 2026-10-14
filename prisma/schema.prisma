@@ -48,3 +48,60 @@ model Talent {
 
   @@map("talents")
 }
+
+model MailMessage {
+  // ID生成方式はSTEP4以降で正式決定
+  id             String    @id
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  graphMessageId String    @map("graph_message_id")
+  mailboxId      String    @map("mailbox_id")
+  folderId       String?   @map("folder_id")
+  subject        String?
+  // 送信者識別用。画面表示しない。検索条件にしない。内部管理用途のみ。
+  senderAddress  String?   @map("sender_address")
+  // Graph上の受信日時
+  receivedAt     DateTime? @map("received_at")
+  graphUpdatedAt DateTime? @map("graph_updated_at")
+  // Graphから取得した日時
+  fetchedAt      DateTime  @map("fetched_at")
+  sourceInfo     String?   @map("source_info")
+
+  @@map("mail_messages")
+}
+
+model AiProcessing {
+  // ID生成方式はSTEP4以降で正式決定
+  id                  String    @id
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  graphMessageId      String    @map("graph_message_id")
+  status              String
+  startedAt           DateTime? @map("started_at")
+  endedAt             DateTime? @map("ended_at")
+  errorType           String?   @map("error_type")
+  errorMessage        String?   @map("error_message")
+  retryCount          Int       @default(0) @map("retry_count")
+  lastRetriedAt       DateTime? @map("last_retried_at")
+  zodValidationStatus String?   @map("zod_validation_status")
+
+  @@map("ai_processings")
+}
+
+model BatchRun {
+  // ID生成方式はSTEP4以降で正式決定
+  id                 String    @id
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  startedAt          DateTime  @map("started_at")
+  endedAt            DateTime? @map("ended_at")
+  status             String
+  targetMailboxCount Int       @map("target_mailbox_count")
+  targetCount        Int       @map("target_count")
+  successCount       Int       @map("success_count")
+  failureCount       Int       @map("failure_count")
+  errorMessage       String?   @map("error_message")
+  exitCode           Int?      @map("exit_code")
+
+  @@map("batch_runs")
+}
