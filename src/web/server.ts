@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { Project } from "../domain/schemas.js";
+import { getPrismaClient } from "../db/client.ts";
+import type { Project } from "../domain/schemas.ts";
+import { projectSchema } from "../domain/schemas.ts";
 
 const defaultPort = 3000;
 
@@ -14,51 +16,6 @@ interface ProjectListItem {
 }
 
 type ApiProject = Project & { readonly id: string };
-
-const mockProjects: readonly ApiProject[] = [
-  {
-    id: "p-001",
-    projectName: "基幹システム刷新支援",
-    summary: "既存業務システムの画面改修とAPI連携を段階的に進める案件です。",
-    requiredSkills: ["TypeScript", "Node.js", "PostgreSQL"],
-    rate: "70万円前後",
-    location: "東京 / リモート併用",
-    workStyle: "リモート併用",
-    startDate: "2026-11",
-    headcount: 2,
-    process: "基本設計からテスト",
-    commercialRestrictions: null,
-    sourceText: "T05-02用の架空案件データです。"
-  },
-  {
-    id: "p-002",
-    projectName: "社内データ活用基盤構築",
-    summary: "複数部門のデータを整理し、検索・集計しやすい形へ整える案件です。",
-    requiredSkills: ["SQL", "Prisma", "バッチ処理"],
-    rate: "75万円前後",
-    location: "品川",
-    workStyle: "常駐",
-    startDate: "2026-12",
-    headcount: 1,
-    process: "詳細設計から運用設計",
-    commercialRestrictions: "商流確認中",
-    sourceText: "T05-02用の架空案件データです。"
-  },
-  {
-    id: "p-003",
-    projectName: "顧客管理Webアプリ改善",
-    summary: "認証後の業務画面と一覧表示を中心に改善するフロント寄りの案件です。",
-    requiredSkills: ["HTML", "CSS", "アクセシビリティ"],
-    rate: "65万円前後",
-    location: "フルリモート",
-    workStyle: "フルリモート",
-    startDate: "即日",
-    headcount: 1,
-    process: "製造からテスト",
-    commercialRestrictions: null,
-    sourceText: "T05-02用の架空案件データです。"
-  }
-];
 
 function getPort(argv: readonly string[]): number {
   const portIndex = argv.indexOf("--port");
@@ -586,6 +543,72 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
   `);
 }
 
+function renderProjectMatchesClientPage(id: string): string {
+  return pageShell("案件マッチング", `
+    <section id="matching-root" class="panel" data-project-id="${id}">
+      <div class="state-box" role="status" aria-live="polite">
+        <div><strong>案件情報を読み込み中です</strong><span>案件取得APIへ接続しています。</span></div>
+      </div>
+    </section>
+    <script>
+      const matchingRoot = document.querySelector("#matching-root");
+      const projectId = matchingRoot.dataset.projectId;
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function renderState(title, message, role = "") {
+        matchingRoot.innerHTML = '<div class="state-box"' + (role ? ' role="' + role + '"' : "") + ">" +
+          "<div><strong>" + escapeHtml(title) + "</strong><span>" + escapeHtml(message) + "</span></div></div>";
+      }
+
+      function renderProject(project) {
+        const skills = Array.isArray(project.requiredSkills) ? project.requiredSkills : [];
+        const skillMarkup = skills.length > 0
+          ? skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("")
+          : "<span>未設定</span>";
+        const value = (item) => item === null || item === undefined ? "未設定" : item;
+
+        matchingRoot.innerHTML =
+          '<p><a class="back-link" href="/projects">← 案件一覧へ戻る</a></p>' +
+          '<h1 class="page-title">' + escapeHtml(value(project.projectName) || "案件名未設定") + "</h1>" +
+          '<p class="lead">' + escapeHtml(value(project.summary) || "概要未設定") + "</p>" +
+          '<dl class="detail-grid">' +
+            '<div class="detail-item"><dt>勤務地</dt><dd>' + escapeHtml(value(project.location)) + "</dd></div>" +
+            '<div class="detail-item"><dt>単価</dt><dd>' + escapeHtml(value(project.rate)) + "</dd></div>" +
+            '<div class="detail-item"><dt>勤務形態</dt><dd>' + escapeHtml(value(project.workStyle)) + "</dd></div>" +
+            '<div class="detail-item"><dt>開始時期</dt><dd>' + escapeHtml(value(project.startDate)) + "</dd></div>" +
+            '<div class="detail-item"><dt>募集人数</dt><dd>' + escapeHtml(value(project.headcount)) + "</dd></div>" +
+            '<div class="detail-item"><dt>工程</dt><dd>' + escapeHtml(value(project.process)) + "</dd></div>" +
+          "</dl>" +
+          '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
+          '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
+          '<div class="matching-layout">' +
+            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>案件にマッチする人材を一覧で確認する領域です。</p><div class="matching-placeholder">人材一覧は未実装です。</div></section>' +
+            '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示する領域です。</p><div class="matching-placeholder">人材を選択すると詳細が表示されます。</div></section>' +
+          "</div>";
+      }
+
+      fetch("/api/projects/" + encodeURIComponent(projectId), { headers: { accept: "application/json" } })
+        .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(new Error(data.error?.code || "API request failed"))))
+        .then((data) => renderProject(data.project))
+        .catch((error) => {
+          if (error.message === "PROJECT_NOT_FOUND") {
+            renderState("案件が見つかりません", "指定された案件IDに対応する案件は存在しません。", "alert");
+            return;
+          }
+          renderState("案件情報を表示できません", "API通信またはDB接続で失敗しました。", "alert");
+        });
+    </script>
+  `);
+}
+
 function sendHtml(response: ServerResponse, statusCode: number, html: string): void {
   response.writeHead(statusCode, {
     "content-type": "text/html; charset=utf-8",
@@ -614,7 +637,7 @@ function projectSummary(project: ApiProject): ProjectListItem {
   };
 }
 
-function handleProjectsApi(url: URL, response: ServerResponse): void {
+async function handleProjectsApi(url: URL, response: ServerResponse): Promise<void> {
   if (url.searchParams.get("state") === "error") {
     sendJson(response, 503, {
       error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
@@ -622,11 +645,23 @@ function handleProjectsApi(url: URL, response: ServerResponse): void {
     return;
   }
 
-  const projects = url.searchParams.get("state") === "empty" ? [] : mockProjects.map(projectSummary);
-  sendJson(response, 200, { projects });
+  if (url.searchParams.get("state") === "empty") {
+    sendJson(response, 200, { projects: [] });
+    return;
+  }
+
+  try {
+    const projects = (await getPrismaClient().project.findMany({ orderBy: { createdAt: "asc" } }))
+      .map((project) => projectSummary({ id: project.id, ...projectSchema.parse(project) }));
+    sendJson(response, 200, { projects });
+  } catch {
+    sendJson(response, 503, {
+      error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
+    });
+  }
 }
 
-function handleProjectByIdApi(id: string, url: URL, response: ServerResponse): void {
+async function handleProjectByIdApi(id: string, url: URL, response: ServerResponse): Promise<void> {
   if (url.searchParams.get("state") === "error") {
     sendJson(response, 503, {
       error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
@@ -634,7 +669,17 @@ function handleProjectByIdApi(id: string, url: URL, response: ServerResponse): v
     return;
   }
 
-  const project = mockProjects.find((item) => item.id === id);
+  let project: ApiProject | undefined;
+
+  try {
+    const record = await getPrismaClient().project.findUnique({ where: { id } });
+    project = record ? { id: record.id, ...projectSchema.parse(record) } : undefined;
+  } catch {
+    sendJson(response, 503, {
+      error: { code: "PROJECTS_UNAVAILABLE", message: "Projects are temporarily unavailable." }
+    });
+    return;
+  }
 
   if (!project) {
     sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
@@ -644,7 +689,7 @@ function handleProjectByIdApi(id: string, url: URL, response: ServerResponse): v
   sendJson(response, 200, { project });
 }
 
-function handleRequest(request: IncomingMessage, response: ServerResponse): void {
+async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (request.method !== "GET") {
@@ -654,13 +699,13 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
   }
 
   if (url.pathname === "/api/projects") {
-    handleProjectsApi(url, response);
+    await handleProjectsApi(url, response);
     return;
   }
 
   if (url.pathname.startsWith("/api/projects/")) {
     const id = decodeURIComponent(url.pathname.slice("/api/projects/".length));
-    handleProjectByIdApi(id, url, response);
+    await handleProjectByIdApi(id, url, response);
     return;
   }
 
@@ -683,8 +728,7 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
       return;
     }
     const id = decodeURIComponent(encodedId);
-    const project = mockProjects.find((item) => item.id === id);
-    sendHtml(response, project ? 200 : 404, renderProjectMatchesPage(project, id));
+    sendHtml(response, 200, renderProjectMatchesClientPage(id));
     return;
   }
 
@@ -696,7 +740,9 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
   `));
 }
 
-const server = createServer(handleRequest);
+const server = createServer((request, response) => {
+  void handleRequest(request, response);
+});
 const port = getPort(process.argv);
 
 server.listen(port, () => {
