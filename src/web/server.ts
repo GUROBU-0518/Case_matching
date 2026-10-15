@@ -21,9 +21,8 @@ type MockTalent = Pick<Talent, "nameOrInitial" | "technicalSkills" | "desiredRat
   readonly id: string;
 };
 
-const mockTalents: readonly MockTalent[] = [
+const mockTalentSeeds: readonly Omit<MockTalent, "id">[] = [
   {
-    id: "talent-001",
     nameOrInitial: "山田 A.",
     technicalSkills: ["TypeScript", "Node.js", "SQL"],
     desiredRate: "月額70万円",
@@ -32,7 +31,6 @@ const mockTalents: readonly MockTalent[] = [
     affiliation: "BP"
   },
   {
-    id: "talent-002",
     nameOrInitial: "佐藤 B.",
     technicalSkills: ["Java", "Spring Boot", "PostgreSQL"],
     desiredRate: "月額68万円",
@@ -41,7 +39,6 @@ const mockTalents: readonly MockTalent[] = [
     affiliation: "BP"
   },
   {
-    id: "talent-003",
     nameOrInitial: "鈴木 C.",
     technicalSkills: ["Python", "Django", "AWS"],
     desiredRate: "月額65万円",
@@ -50,6 +47,17 @@ const mockTalents: readonly MockTalent[] = [
     affiliation: "BP"
   }
 ];
+
+const mockTalents: readonly MockTalent[] = Array.from({ length: 41 }, (_, index) => {
+  const seed = mockTalentSeeds[index % mockTalentSeeds.length]!;
+  return {
+    ...seed,
+    id: `talent-${String(index + 1).padStart(3, "0")}`,
+    nameOrInitial: index < mockTalentSeeds.length
+      ? seed.nameOrInitial
+      : `架空人材 ${String(index + 1).padStart(2, "0")}`
+  };
+});
 
 function getPort(argv: readonly string[]): number {
   const portIndex = argv.indexOf("--port");
@@ -362,6 +370,18 @@ function pageShell(title: string, body: string): string {
       margin-top: 16px;
     }
 
+    .talent-count {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .load-more {
+      width: 100%;
+      margin-top: 14px;
+      cursor: pointer;
+    }
+
     .talent-card {
       min-width: 0;
       padding: 14px;
@@ -653,6 +673,8 @@ function renderProjectMatchesClientPage(id: string): string {
       const matchingRoot = document.querySelector("#matching-root");
       const projectId = matchingRoot.dataset.projectId;
       const mockTalents = ${serializedTalents};
+      let visibleTalentCount = Math.min(20, mockTalents.length);
+      let selectedTalentId = null;
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -673,8 +695,14 @@ function renderProjectMatchesClientPage(id: string): string {
           return '<div class="matching-placeholder">表示できる人材がありません。</div>';
         }
 
-        return '<div class="talent-list">' + talents.map((talent) =>
-          '<button type="button" class="talent-card" data-talent-id="' + escapeHtml(talent.id) + '" aria-pressed="false">' +
+        const visibleTalents = talents.slice(0, visibleTalentCount);
+        const loadMoreMarkup = visibleTalentCount < talents.length
+          ? '<button type="button" class="button load-more" id="load-more-talents">さらに表示</button>'
+          : '';
+
+        return '<p class="talent-count" aria-live="polite">' + visibleTalents.length + ' / ' + talents.length + '人表示</p>' +
+          '<div class="talent-list">' + visibleTalents.map((talent) =>
+          '<button type="button" class="talent-card" data-talent-id="' + escapeHtml(talent.id) + '" aria-pressed="' + (talent.id === selectedTalentId ? 'true' : 'false') + '">' +
             '<h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
             '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
             '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
@@ -684,7 +712,7 @@ function renderProjectMatchesClientPage(id: string): string {
               talent.technicalSkills.map((skill) => '<span class="skill">' + escapeHtml(skill) + '</span>').join('') +
             '</div>' +
           '</button>'
-        ).join('') + '</div>';
+        ).join('') + '</div>' + loadMoreMarkup;
       }
 
       function renderTalentDetail(talent) {
@@ -702,13 +730,33 @@ function renderProjectMatchesClientPage(id: string): string {
         '</div>';
       }
 
-      function updateTalentSelection(selectedTalentId) {
+      function updateTalentSelection(talentId) {
+        selectedTalentId = talentId;
         const selectedTalent = mockTalents.find((talent) => talent.id === selectedTalentId);
         document.querySelectorAll('[data-talent-id]').forEach((card) => {
           card.setAttribute('aria-pressed', card.dataset.talentId === selectedTalentId ? 'true' : 'false');
         });
         const detailRoot = document.querySelector('#talent-detail-root');
         detailRoot.innerHTML = renderTalentDetail(selectedTalent);
+      }
+
+      function bindTalentInteractions() {
+        document.querySelectorAll('[data-talent-id]').forEach((card) => {
+          card.addEventListener('click', () => updateTalentSelection(card.dataset.talentId));
+          card.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              updateTalentSelection(card.dataset.talentId);
+            }
+          });
+        });
+
+        const loadMoreButton = document.querySelector('#load-more-talents');
+        loadMoreButton?.addEventListener('click', () => {
+          visibleTalentCount = Math.min(visibleTalentCount + 20, mockTalents.length);
+          document.querySelector('#talent-list-root').innerHTML = renderTalentList(mockTalents);
+          bindTalentInteractions();
+        });
       }
 
       function renderProject(project) {
@@ -733,19 +781,11 @@ function renderProjectMatchesClientPage(id: string): string {
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
-            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>画面確認用の架空データを表示しています。</p>' + renderTalentList(mockTalents) + '</section>' +
+            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>画面確認用の架空データを表示しています。</p><div id="talent-list-root">' + renderTalentList(mockTalents) + '</div></section>' +
             '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
           "</div>";
 
-        document.querySelectorAll('[data-talent-id]').forEach((card) => {
-          card.addEventListener('click', () => updateTalentSelection(card.dataset.talentId));
-          card.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              updateTalentSelection(card.dataset.talentId);
-            }
-          });
-        });
+        bindTalentInteractions();
       }
 
       fetch("/api/projects/" + encodeURIComponent(projectId), { headers: { accept: "application/json" } })
