@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getPrismaClient } from "../db/client.ts";
-import type { Project } from "../domain/schemas.ts";
+import type { Project, Talent } from "../domain/schemas.ts";
 import { projectSchema } from "../domain/schemas.ts";
 
 const defaultPort = 3000;
@@ -17,17 +17,13 @@ interface ProjectListItem {
 
 type ApiProject = Project & { readonly id: string };
 
-type MockTalent = {
-  readonly nameOrInitial: string;
-  readonly technicalSkills: readonly string[];
-  readonly desiredRate: string;
-  readonly nearestStation: string;
-  readonly desiredWorkStyle: string;
-  readonly affiliation: "BP";
+type MockTalent = Pick<Talent, "nameOrInitial" | "technicalSkills" | "desiredRate" | "nearestStation" | "desiredWorkStyle" | "affiliation"> & {
+  readonly id: string;
 };
 
 const mockTalents: readonly MockTalent[] = [
   {
+    id: "talent-001",
     nameOrInitial: "山田 A.",
     technicalSkills: ["TypeScript", "Node.js", "SQL"],
     desiredRate: "月額70万円",
@@ -36,6 +32,7 @@ const mockTalents: readonly MockTalent[] = [
     affiliation: "BP"
   },
   {
+    id: "talent-002",
     nameOrInitial: "佐藤 B.",
     technicalSkills: ["Java", "Spring Boot", "PostgreSQL"],
     desiredRate: "月額68万円",
@@ -44,6 +41,7 @@ const mockTalents: readonly MockTalent[] = [
     affiliation: "BP"
   },
   {
+    id: "talent-003",
     nameOrInitial: "鈴木 C.",
     technicalSkills: ["Python", "Django", "AWS"],
     desiredRate: "月額65万円",
@@ -370,6 +368,36 @@ function pageShell(title: string, body: string): string {
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #f8fafc;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      width: 100%;
+    }
+
+    button.talent-card {
+      cursor: pointer;
+    }
+
+    button.talent-card:hover,
+    button.talent-card:focus-visible,
+    button.talent-card[aria-pressed="true"] {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgb(15 118 110 / 15%);
+      outline: none;
+    }
+
+    .talent-detail {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .talent-detail-item {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      overflow-wrap: anywhere;
     }
 
     .talent-card h3 {
@@ -646,7 +674,7 @@ function renderProjectMatchesClientPage(id: string): string {
         }
 
         return '<div class="talent-list">' + talents.map((talent) =>
-          '<article class="talent-card">' +
+          '<button type="button" class="talent-card" data-talent-id="' + escapeHtml(talent.id) + '" aria-pressed="false">' +
             '<h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
             '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
             '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
@@ -655,8 +683,32 @@ function renderProjectMatchesClientPage(id: string): string {
             '<div class="talent-skills" aria-label="技術スキル">' +
               talent.technicalSkills.map((skill) => '<span class="skill">' + escapeHtml(skill) + '</span>').join('') +
             '</div>' +
-          '</article>'
+          '</button>'
         ).join('') + '</div>';
+      }
+
+      function renderTalentDetail(talent) {
+        if (!talent) {
+          return '<div class="matching-placeholder">人材を選択してください。</div>';
+        }
+
+        return '<div class="talent-detail" data-selected-talent-id="' + escapeHtml(talent.id) + '">' +
+          '<div class="talent-detail-item"><strong>氏名・イニシャル</strong><div>' + escapeHtml(talent.nameOrInitial) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>技術スキル</strong><div>' + escapeHtml(talent.technicalSkills.join('、')) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>希望単価</strong><div>' + escapeHtml(talent.desiredRate) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>最寄り駅</strong><div>' + escapeHtml(talent.nearestStation) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>希望勤務形態</strong><div>' + escapeHtml(talent.desiredWorkStyle) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>所属</strong><div>' + escapeHtml(talent.affiliation) + '</div></div>' +
+        '</div>';
+      }
+
+      function updateTalentSelection(selectedTalentId) {
+        const selectedTalent = mockTalents.find((talent) => talent.id === selectedTalentId);
+        document.querySelectorAll('[data-talent-id]').forEach((card) => {
+          card.setAttribute('aria-pressed', card.dataset.talentId === selectedTalentId ? 'true' : 'false');
+        });
+        const detailRoot = document.querySelector('#talent-detail-root');
+        detailRoot.innerHTML = renderTalentDetail(selectedTalent);
       }
 
       function renderProject(project) {
@@ -682,8 +734,18 @@ function renderProjectMatchesClientPage(id: string): string {
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
             '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>画面確認用の架空データを表示しています。</p>' + renderTalentList(mockTalents) + '</section>' +
-            '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示する領域です。</p><div class="matching-placeholder">人材を選択すると詳細が表示されます。</div></section>' +
+            '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
           "</div>";
+
+        document.querySelectorAll('[data-talent-id]').forEach((card) => {
+          card.addEventListener('click', () => updateTalentSelection(card.dataset.talentId));
+          card.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              updateTalentSelection(card.dataset.talentId);
+            }
+          });
+        });
       }
 
       fetch("/api/projects/" + encodeURIComponent(projectId), { headers: { accept: "application/json" } })
