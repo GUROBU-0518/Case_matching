@@ -17,6 +17,42 @@ interface ProjectListItem {
 
 type ApiProject = Project & { readonly id: string };
 
+type MockTalent = {
+  readonly nameOrInitial: string;
+  readonly technicalSkills: readonly string[];
+  readonly desiredRate: string;
+  readonly nearestStation: string;
+  readonly desiredWorkStyle: string;
+  readonly affiliation: "BP";
+};
+
+const mockTalents: readonly MockTalent[] = [
+  {
+    nameOrInitial: "山田 A.",
+    technicalSkills: ["TypeScript", "Node.js", "SQL"],
+    desiredRate: "月額70万円",
+    nearestStation: "新宿駅",
+    desiredWorkStyle: "リモート併用",
+    affiliation: "BP"
+  },
+  {
+    nameOrInitial: "佐藤 B.",
+    technicalSkills: ["Java", "Spring Boot", "PostgreSQL"],
+    desiredRate: "月額68万円",
+    nearestStation: "横浜駅",
+    desiredWorkStyle: "フルリモート",
+    affiliation: "BP"
+  },
+  {
+    nameOrInitial: "鈴木 C.",
+    technicalSkills: ["Python", "Django", "AWS"],
+    desiredRate: "月額65万円",
+    nearestStation: "大宮駅",
+    desiredWorkStyle: "出社・リモート併用",
+    affiliation: "BP"
+  }
+];
+
 function getPort(argv: readonly string[]): number {
   const portIndex = argv.indexOf("--port");
   const portValue = portIndex >= 0 ? argv[portIndex + 1] : process.env.PORT;
@@ -322,6 +358,39 @@ function pageShell(title: string, body: string): string {
       text-align: center;
     }
 
+    .talent-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .talent-card {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .talent-card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .talent-card p {
+      margin: 4px 0 0;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .talent-skills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
     .meta {
       display: flex;
       flex-wrap: wrap;
@@ -544,6 +613,8 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
 }
 
 function renderProjectMatchesClientPage(id: string): string {
+  const serializedTalents = JSON.stringify(mockTalents).replaceAll("<", "\\u003c");
+
   return pageShell("案件マッチング", `
     <section id="matching-root" class="panel" data-project-id="${id}">
       <div class="state-box" role="status" aria-live="polite">
@@ -553,6 +624,7 @@ function renderProjectMatchesClientPage(id: string): string {
     <script>
       const matchingRoot = document.querySelector("#matching-root");
       const projectId = matchingRoot.dataset.projectId;
+      const mockTalents = ${serializedTalents};
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -566,6 +638,25 @@ function renderProjectMatchesClientPage(id: string): string {
       function renderState(title, message, role = "") {
         matchingRoot.innerHTML = '<div class="state-box"' + (role ? ' role="' + role + '"' : "") + ">" +
           "<div><strong>" + escapeHtml(title) + "</strong><span>" + escapeHtml(message) + "</span></div></div>";
+      }
+
+      function renderTalentList(talents) {
+        if (talents.length === 0) {
+          return '<div class="matching-placeholder">表示できる人材がありません。</div>';
+        }
+
+        return '<div class="talent-list">' + talents.map((talent) =>
+          '<article class="talent-card">' +
+            '<h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
+            '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
+            '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
+            '<p>希望勤務形態: ' + escapeHtml(talent.desiredWorkStyle) + '</p>' +
+            '<p>所属: ' + escapeHtml(talent.affiliation) + '</p>' +
+            '<div class="talent-skills" aria-label="技術スキル">' +
+              talent.technicalSkills.map((skill) => '<span class="skill">' + escapeHtml(skill) + '</span>').join('') +
+            '</div>' +
+          '</article>'
+        ).join('') + '</div>';
       }
 
       function renderProject(project) {
@@ -590,7 +681,7 @@ function renderProjectMatchesClientPage(id: string): string {
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
-            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>案件にマッチする人材を一覧で確認する領域です。</p><div class="matching-placeholder">人材一覧は未実装です。</div></section>' +
+            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>画面確認用の架空データを表示しています。</p>' + renderTalentList(mockTalents) + '</section>' +
             '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示する領域です。</p><div class="matching-placeholder">人材を選択すると詳細が表示されます。</div></section>' +
           "</div>";
       }
