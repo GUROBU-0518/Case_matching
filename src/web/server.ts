@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getPrismaClient } from "../db/client.ts";
 import type { Project, Talent } from "../domain/schemas.ts";
-import { projectSchema } from "../domain/schemas.ts";
+import { projectSchema, talentSchema } from "../domain/schemas.ts";
 
 const defaultPort = 3000;
 
@@ -16,6 +16,7 @@ interface ProjectListItem {
 }
 
 type ApiProject = Project & { readonly id: string };
+type ApiTalent = Talent & { readonly id: string };
 
 type MockTalent = Pick<Talent, "nameOrInitial" | "technicalSkills" | "desiredRate" | "nearestStation" | "desiredWorkStyle" | "affiliation"> & {
   readonly id: string;
@@ -830,6 +831,68 @@ function projectSummary(project: ApiProject): ProjectListItem {
   };
 }
 
+function talentResponse(record: { id: string } & Record<string, unknown>): ApiTalent {
+  return { id: record.id, ...talentSchema.parse(record) };
+}
+
+function renderTalentsPage(): string {
+  return pageShell("人材一覧", `
+    <main class="page-shell">
+      <section class="panel" aria-labelledby="talents-heading">
+        <h1 id="talents-heading" class="page-title">人材一覧</h1>
+        <p class="lead">登録済みの人材情報を表示します。</p>
+        <div id="talents-root" aria-live="polite"><p>読み込み中です。</p></div>
+      </section>
+    </main>
+    <script>
+      const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+      const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      function renderTalents(talents) {
+        if (!talents.length) return '<p class="empty-state">人材が登録されていません。</p>';
+        return '<div class="project-grid">' + talents.map((talent) =>
+          '<article class="panel"><h2>' + display(talent.id) + '</h2>' +
+          '<p>技術スキル: ' + display((talent.technicalSkills || []).join("、")) + '</p>' +
+          '<p>経験工程: ' + display((talent.availableProcess || []).join("、")) + '</p>' +
+          '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
+          '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
+          '<a class="button" href="/talents/' + encodeURIComponent(talent.id) + '">詳細を見る</a></article>'
+        ).join('') + '</div>';
+      }
+      fetch('/api/talents').then((response) => response.ok ? response.json() : Promise.reject(new Error('talents')))
+        .then((data) => { document.querySelector('#talents-root').innerHTML = renderTalents(Array.isArray(data.talents) ? data.talents : []); })
+        .catch(() => { document.querySelector('#talents-root').innerHTML = '<p class="error-state">人材情報を取得できませんでした。</p>'; });
+    </script>
+  `);
+}
+
+function renderTalentDetailPage(id: string): string {
+  return pageShell("人材詳細", `
+    <main class="page-shell">
+      <section class="panel" aria-labelledby="talent-heading">
+        <a href="/talents">← 人材一覧へ戻る</a>
+        <h1 id="talent-heading" class="page-title">人材詳細</h1>
+        <div id="talent-root" aria-live="polite"><p>読み込み中です。</p></div>
+      </section>
+    </main>
+    <script>
+      const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+      const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      const id = ${JSON.stringify(id)};
+      fetch('/api/talents/' + encodeURIComponent(id)).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error?.message || 'talent'); return data; })
+        .then(({ talent }) => { document.querySelector('#talent-root').innerHTML = '<dl>' +
+          '<dt>ID</dt><dd>' + display(talent.id) + '</dd>' +
+          '<dt>技術スキル</dt><dd>' + display((talent.technicalSkills || []).join("、")) + '</dd>' +
+          '<dt>経験工程・担当業務</dt><dd>' + display((talent.availableProcess || []).join("、")) + '</dd>' +
+          '<dt>希望単価</dt><dd>' + display(talent.desiredRate) + '</dd>' +
+          '<dt>最寄り駅</dt><dd>' + display(talent.nearestStation) + '</dd>' +
+          '<dt>希望勤務条件</dt><dd>' + display(talent.desiredWorkStyle) + '</dd>' +
+          '<dt>稼働開始時期</dt><dd>' + display(talent.availableFrom) + '</dd>' +
+          '<dt>所属区分</dt><dd>' + display(talent.affiliation) + '</dd></dl>'; })
+        .catch((error) => { document.querySelector('#talent-root').innerHTML = '<p class="error-state">' + escapeHtml(error.message === 'Talent was not found.' ? error.message : '人材情報を取得できませんでした。') + '</p>'; });
+    </script>
+  `);
+}
+
 async function handleProjectsApi(url: URL, response: ServerResponse): Promise<void> {
   if (url.searchParams.get("state") === "error") {
     sendJson(response, 503, {
@@ -882,6 +945,28 @@ async function handleProjectByIdApi(id: string, url: URL, response: ServerRespon
   sendJson(response, 200, { project });
 }
 
+async function handleTalentsApi(response: ServerResponse): Promise<void> {
+  try {
+    const records = await getPrismaClient().talent.findMany({ orderBy: { id: "asc" } });
+    sendJson(response, 200, { talents: records.map((record) => talentResponse(record)) });
+  } catch {
+    sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
+  }
+}
+
+async function handleTalentByIdApi(id: string, response: ServerResponse): Promise<void> {
+  try {
+    const record = await getPrismaClient().talent.findUnique({ where: { id } });
+    if (!record) {
+      sendJson(response, 404, { error: { code: "TALENT_NOT_FOUND", message: "Talent was not found." } });
+      return;
+    }
+    sendJson(response, 200, { talent: talentResponse(record) });
+  } catch {
+    sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
+  }
+}
+
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
@@ -893,6 +978,17 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   if (url.pathname === "/api/projects") {
     await handleProjectsApi(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/talents") {
+    await handleTalentsApi(response);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/talents/")) {
+    const id = decodeURIComponent(url.pathname.slice("/api/talents/".length));
+    await handleTalentByIdApi(id, response);
     return;
   }
 
@@ -910,6 +1006,17 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   if (url.pathname === "/projects") {
     sendHtml(response, 200, renderProjectsPage());
+    return;
+  }
+
+  if (url.pathname === "/talents") {
+    sendHtml(response, 200, renderTalentsPage());
+    return;
+  }
+
+  const talentRoute = /^\/talents\/([^/]+)$/.exec(url.pathname);
+  if (talentRoute?.[1]) {
+    sendHtml(response, 200, renderTalentDetailPage(decodeURIComponent(talentRoute[1])));
     return;
   }
 
