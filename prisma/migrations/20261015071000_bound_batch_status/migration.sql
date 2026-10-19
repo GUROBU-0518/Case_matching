@@ -1,0 +1,1 @@
+ALTER TABLE "batch_runs" ALTER COLUMN "status" TYPE VARCHAR(30);

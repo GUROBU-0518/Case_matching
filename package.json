@@ -8,7 +8,15 @@
     "lint": "eslint .",
     "test": "vitest run --pool=threads --no-file-parallelism --maxWorkers=1 --minWorkers=1",
     "db:generate": "prisma generate",
-    "db:validate": "prisma validate"
+    "db:validate": "prisma validate",
+    "mail:mock": "node --experimental-strip-types src/mail/mock-cli.ts",
+    "mail:preprocess": "node --experimental-strip-types src/mail/preprocess-cli.ts",
+    "mail": "npm run mail:mock",
+    "batch": "node --experimental-strip-types src/db/mail-batch-cli.ts",
+    "batch:db": "node --experimental-strip-types src/db/mail-batch-cli.ts",
+    "batch:memory": "node --experimental-strip-types src/batch/mail-batch-cli.ts",
+    "graph:fetch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-mail-cli.ts",
+    "graph:delta": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-delta-cli.ts"
   },
   "engines": {
     "node": ">=20"

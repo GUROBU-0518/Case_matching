@@ -9,8 +9,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals"],
-    "outDir": "dist"
+    "types": [
+      "node",
+      "vitest/globals"
+    ],
+    "outDir": "dist",
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests", "eslint.config.js"]
+  "include": [
+    "src",
+    "tests",
+    "eslint.config.js"
+  ]
 }

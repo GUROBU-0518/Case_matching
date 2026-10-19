@@ -10,9 +10,9 @@ datasource db {
 model Project {
   // ID生成方式はSTEP3終了後に正式決定
   id                     String       @id
-  createdAt              DateTime     @default(now()) @map("created_at")
-  updatedAt              DateTime     @updatedAt @map("updated_at")
-  projectName            String?      @map("project_name")
+  createdAt              DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  projectName            String?      @map("project_name") @db.VarChar(255)
   summary                String?
   // 情報なしはNULLではなく空配列で扱う
   requiredSkills         String[]     @map("required_skills")
@@ -35,9 +35,9 @@ model Project {
 model Talent {
   // ID生成方式はSTEP3終了後に正式決定
   id               String       @id
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  nameOrInitial    String?      @map("name_or_initial")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  nameOrInitial    String?      @map("name_or_initial") @db.VarChar(100)
   // 情報なしはNULLではなく空配列で扱う
   technicalSkills  String[]     @map("technical_skills")
   desiredRate      String?      @map("desired_rate")
@@ -60,19 +60,19 @@ model Talent {
 model MailMessage {
   // ID生成方式はSTEP4以降で正式決定
   id             String        @id
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   graphMessageId String        @map("graph_message_id")
   mailboxId      String        @map("mailbox_id")
   folderId       String?       @map("folder_id")
-  subject        String?
+  subject        String?       @db.VarChar(500)
   // 送信者識別用。画面表示しない。検索条件にしない。内部管理用途のみ。
-  senderAddress  String?       @map("sender_address")
+  senderAddress  String?       @map("sender_address") @db.VarChar(320)
   // Graph上の受信日時
-  receivedAt     DateTime?     @map("received_at")
-  graphUpdatedAt DateTime?     @map("graph_updated_at")
+  receivedAt     DateTime?     @map("received_at") @db.Timestamptz(3)
+  graphUpdatedAt DateTime?     @map("graph_updated_at") @db.Timestamptz(3)
   // Graphから取得した日時
-  fetchedAt      DateTime      @map("fetched_at")
+  fetchedAt      DateTime      @map("fetched_at") @db.Timestamptz(3)
   sourceInfo     String?       @map("source_info")
   // onDeleteはSTEP5以降でCascade/Restrict/SetNull/NoActionを検討する。
   projects       Project[]
@@ -90,17 +90,17 @@ model MailMessage {
 model AiProcessing {
   // ID生成方式はSTEP4以降で正式決定
   id                  String       @id
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @updatedAt @map("updated_at")
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
   graphMessageId      String       @map("graph_message_id")
   // 将来的にmailMessageIdへ完全移行できる場合は削除候補
-  status              String
-  startedAt           DateTime?    @map("started_at")
-  endedAt             DateTime?    @map("ended_at")
-  errorType           String?      @map("error_type")
+  status              String       @db.VarChar(30)
+  startedAt           DateTime?    @map("started_at") @db.Timestamptz(3)
+  endedAt             DateTime?    @map("ended_at") @db.Timestamptz(3)
+  errorType           String?      @map("error_type") @db.VarChar(30)
   errorMessage        String?      @map("error_message")
   retryCount          Int          @default(0) @map("retry_count")
-  lastRetriedAt       DateTime?    @map("last_retried_at")
+  lastRetriedAt       DateTime?    @map("last_retried_at") @db.Timestamptz(3)
   zodValidationStatus String?      @map("zod_validation_status")
   // MVPでは1メール1処理。再処理はretryCount更新方式。
   mailMessageId       String?      @unique @map("mail_message_id")
@@ -114,11 +114,11 @@ model AiProcessing {
 model BatchRun {
   // ID生成方式はSTEP4以降で正式決定
   id                 String    @id
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  startedAt          DateTime  @map("started_at")
-  endedAt            DateTime? @map("ended_at")
-  status             String
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  startedAt          DateTime  @map("started_at") @db.Timestamptz(3)
+  endedAt            DateTime? @map("ended_at") @db.Timestamptz(3)
+  status             String    @db.VarChar(30)
   targetMailboxCount Int       @map("target_mailbox_count")
   targetCount        Int       @map("target_count")
   successCount       Int       @map("success_count")
@@ -127,4 +127,15 @@ model BatchRun {
   exitCode           Int?      @map("exit_code")
 
   @@map("batch_runs")
+}
+
+model MailSyncState {
+  id           String   @id
+  mailboxId    String   @unique @map("mailbox_id")
+  deltaLink    String   @map("delta_link")
+  lastSyncedAt DateTime @map("last_synced_at") @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("mail_sync_states")
 }

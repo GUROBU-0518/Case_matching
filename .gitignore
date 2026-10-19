@@ -5,3 +5,7 @@ coverage/
 .env.*
 !.env.example
 *.log
+
+local-data/emails/
+
+local-data/preprocessed/
