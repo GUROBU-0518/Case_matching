@@ -327,6 +327,16 @@ function pageShell(title: string, body: string): string {
       color: var(--muted);
     }
 
+    .source-text {
+      margin: 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
     .matching-layout {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -638,6 +648,10 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
         <div class="detail-item"><dt>工程</dt><dd>${displayValue(project.process)}</dd></div>
       </dl>
       <section class="detail-section">
+        <h2>案件メールの原文</h2>
+        <p class="source-text">${project.sourceText === null ? "メール原文未登録" : escapeHtml(project.sourceText)}</p>
+      </section>
+      <section class="detail-section">
         <h2>必須スキル</h2>
         <div class="skills" aria-label="必須スキル">${skillMarkup}</div>
       </section>
@@ -779,6 +793,11 @@ function renderProjectMatchesClientPage(id: string): string {
             '<div class="detail-item"><dt>募集人数</dt><dd>' + escapeHtml(value(project.headcount)) + "</dd></div>" +
             '<div class="detail-item"><dt>工程</dt><dd>' + escapeHtml(value(project.process)) + "</dd></div>" +
           "</dl>" +
+          '<section class="detail-section"><h2>案件メールの原文</h2><p class="source-text">' +
+            (project.sourceText === null || project.sourceText === undefined
+              ? "メール原文未登録"
+              : escapeHtml(project.sourceText)) +
+          "</p></section>" +
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
@@ -887,7 +906,8 @@ function renderTalentDetailPage(id: string): string {
           '<dt>最寄り駅</dt><dd>' + display(talent.nearestStation) + '</dd>' +
           '<dt>希望勤務条件</dt><dd>' + display(talent.desiredWorkStyle) + '</dd>' +
           '<dt>稼働開始時期</dt><dd>' + display(talent.availableFrom) + '</dd>' +
-          '<dt>所属区分</dt><dd>' + display(talent.affiliation) + '</dd></dl>'; })
+          '<dt>所属区分</dt><dd>' + display(talent.affiliation) + '</dd>' +
+          '<dt>人材メールの原文</dt><dd class="source-text">' + display(talent.sourceText) + '</dd></dl>'; })
         .catch((error) => { document.querySelector('#talent-root').innerHTML = '<p class="error-state">' + escapeHtml(error.message === 'Talent was not found.' ? error.message : '人材情報を取得できませんでした。') + '</p>'; });
     </script>
   `);
