@@ -22,6 +22,8 @@ type MockTalent = Pick<Talent, "nameOrInitial" | "technicalSkills" | "desiredRat
   readonly id: string;
 };
 
+const mockTalentPageSize = 10;
+
 const mockTalentSeeds: readonly Omit<MockTalent, "id">[] = [
   {
     nameOrInitial: "山田 A.",
@@ -75,6 +77,36 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function encodeTalentCursor(projectId: string, offset: number): string {
+  return Buffer.from(JSON.stringify({ projectId, offset }), "utf8").toString("base64url");
+}
+
+function decodeTalentCursor(cursor: string, projectId: string): number | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { projectId?: unknown; offset?: unknown };
+    return decoded.projectId === projectId && Number.isInteger(decoded.offset) && (decoded.offset as number) >= 0
+      ? decoded.offset as number
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function mockTalentResponse(talent: MockTalent): ApiTalent {
+  return {
+    id: talent.id,
+    nameOrInitial: talent.nameOrInitial,
+    technicalSkills: talent.technicalSkills,
+    desiredRate: talent.desiredRate,
+    nearestStation: talent.nearestStation,
+    desiredWorkStyle: talent.desiredWorkStyle,
+    availableFrom: null,
+    availableProcess: [],
+    affiliation: talent.affiliation,
+    sourceText: null
+  };
 }
 
 function pageShell(title: string, body: string): string {
@@ -241,31 +273,73 @@ function pageShell(title: string, body: string): string {
       gap: 12px;
     }
 
+    .project-list-panel {
+      min-height: 0;
+    }
+
+    .project-list-panel .project-grid {
+      max-height: none;
+    }
+
     .project-card {
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 16px;
-      padding: 18px;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) auto;
+      gap: 12px;
+      min-height: 58px;
+      padding: 7px 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #ffffff;
     }
 
     .project-card h2 {
-      margin: 0 0 8px;
-      font-size: 18px;
+      margin: 0 0 3px;
+      overflow: hidden;
+      font-size: 15px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .project-card p {
-      margin: 0 0 12px;
+      margin: 0;
       color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .project-actions {
+    .project-card .project-actions {
       display: flex;
       align-items: center;
       justify-content: end;
-      margin-top: 16px;
+      margin-top: 0;
+    }
+
+    .project-card .skills {
+      margin-top: 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .project-card .meta {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 3px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .project-card .meta li {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .project-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 10px;
     }
 
     .button,
@@ -337,19 +411,59 @@ function pageShell(title: string, body: string): string {
       white-space: pre-wrap;
     }
 
+    .source-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .source-header h2 {
+      margin: 0;
+    }
+
+    .source-toggle {
+      flex-shrink: 0;
+    }
+
     .matching-layout {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 16px;
       margin-top: 28px;
+      min-height: 0;
+      align-items: stretch;
     }
 
     .matching-panel {
       min-width: 0;
+      min-height: 0;
       padding: 18px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #ffffff;
+    }
+
+    .talent-list-panel,
+    .talent-detail-panel {
+      display: flex;
+      flex-direction: column;
+      height: min(72vh, 760px);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    #talent-list-root,
+    #talent-detail-root {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    #talent-list-root {
+      overflow: hidden;
     }
 
     .matching-panel h2 {
@@ -377,8 +491,24 @@ function pageShell(title: string, body: string): string {
 
     .talent-list {
       display: grid;
-      gap: 10px;
-      margin-top: 16px;
+      flex: 1 1 auto;
+      gap: 5px;
+      margin-top: 10px;
+      min-height: 0;
+      max-height: none;
+      overflow-y: auto;
+      padding-right: 6px;
+      overscroll-behavior: contain;
+    }
+
+    .pagination {
+      display: flex;
+      flex-shrink: 0;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 2px;
     }
 
     .talent-count {
@@ -393,9 +523,14 @@ function pageShell(title: string, body: string): string {
       cursor: pointer;
     }
 
-    .talent-card {
+    .talent-list-panel .talent-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      align-items: start;
+      gap: 4px 10px;
       min-width: 0;
-      padding: 14px;
+      min-height: 54px;
+      padding: 6px 9px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #f8fafc;
@@ -423,6 +558,13 @@ function pageShell(title: string, body: string): string {
       margin-top: 16px;
     }
 
+    #talent-detail-root {
+      overflow-y: auto;
+      max-height: none;
+      padding-right: 6px;
+      overscroll-behavior: contain;
+    }
+
     .talent-detail-item {
       padding: 12px;
       border: 1px solid var(--line);
@@ -431,23 +573,42 @@ function pageShell(title: string, body: string): string {
       overflow-wrap: anywhere;
     }
 
-    .talent-card h3 {
-      margin: 0 0 8px;
-      font-size: 16px;
+    .talent-list-panel .talent-card h3 {
+      min-width: 0;
+      margin: 0 0 3px;
+      overflow: hidden;
+      font-size: 15px;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .talent-card p {
-      margin: 4px 0 0;
+    .talent-list-panel .talent-card-main,
+    .talent-list-panel .talent-card-meta {
+      min-width: 0;
+      align-self: start;
+    }
+
+    .talent-list-panel .talent-card p {
+      display: inline;
+      margin: 0 8px 0 0;
       overflow-wrap: anywhere;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 12px;
+      line-height: 1.2;
+      white-space: nowrap;
     }
 
-    .talent-skills {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 10px;
+    .talent-list-panel .talent-skills {
+      display: block;
+      margin-top: 0;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .meta {
@@ -495,6 +656,10 @@ function pageShell(title: string, body: string): string {
         align-items: stretch;
       }
 
+      .project-card .meta {
+        flex-wrap: wrap;
+      }
+
       .app-header {
         padding: 14px 16px;
       }
@@ -532,7 +697,7 @@ function pageShell(title: string, body: string): string {
 
 function renderProjectsPage(): string {
   return pageShell("案件一覧", `
-    <section class="panel">
+    <section class="panel project-list-panel">
       <div class="toolbar">
         <div>
           <h1 class="page-title">案件一覧</h1>
@@ -554,6 +719,9 @@ function renderProjectsPage(): string {
       const searchParams = new URLSearchParams(window.location.search);
       const apiState = searchParams.get("apiState");
       const apiUrl = apiState ? "/api/projects?state=" + encodeURIComponent(apiState) : "/api/projects";
+      const projectPageSize = 10;
+      let allProjects = [];
+      let currentProjectPage = 0;
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -578,25 +746,53 @@ function renderProjectsPage(): string {
           return;
         }
 
+        allProjects = projects;
+        currentProjectPage = Math.min(currentProjectPage, Math.max(0, Math.ceil(projects.length / projectPageSize) - 1));
+        renderProjectPage();
+      }
+
+      function renderProjectPage() {
+        const totalPages = Math.max(1, Math.ceil(allProjects.length / projectPageSize));
+        const visibleProjects = allProjects.slice(currentProjectPage * projectPageSize, (currentProjectPage + 1) * projectPageSize);
         projectsRoot.className = "project-grid";
-        projectsRoot.innerHTML = projects.map((project) => {
+        projectsRoot.innerHTML = visibleProjects.map((project) => {
           const skills = Array.isArray(project.requiredSkills) ? project.requiredSkills : [];
           return '<article class="project-card">' +
-            "<div>" +
+            '<div class="project-card-main">' +
               "<h2>" + escapeHtml(project.name) + "</h2>" +
-              "<p>" + escapeHtml(project.summary) + "</p>" +
+              '<div class="skills" aria-label="' + escapeHtml(project.name) + 'の必須スキル">' +
+                skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("") +
+              "</div>" +
+            "</div>" +
+            '<div class="project-card-meta">' +
               '<ul class="meta">' +
                 "<li>" + escapeHtml(project.location) + "</li>" +
                 "<li>" + escapeHtml(project.rate) + "</li>" +
                 "<li>" + escapeHtml(project.startDate) + "</li>" +
               "</ul>" +
-            "</div>" +
-            '<div class="skills" aria-label="' + escapeHtml(project.name) + 'の必須スキル">' +
-              skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("") +
+              "<p>" + escapeHtml(project.summary) + "</p>" +
             "</div>" +
             '<div class="project-actions"><a class="button" href="/projects/' + encodeURIComponent(project.id) + '/matches">この案件を選択</a></div>' +
           "</article>";
-        }).join("");
+        }).join("") +
+          '<div class="project-pagination" aria-label="案件一覧ページ移動">' +
+            '<button type="button" class="button" id="previous-projects"' + (currentProjectPage === 0 ? ' disabled' : '') + '>前へ</button>' +
+            '<span aria-live="polite">' + (currentProjectPage + 1) + " / " + totalPages + "ページ</span>" +
+            '<button type="button" class="button" id="next-projects"' + (currentProjectPage >= totalPages - 1 ? ' disabled' : '') + '>次へ</button>' +
+          "</div>";
+
+        document.querySelector("#previous-projects")?.addEventListener("click", () => {
+          if (currentProjectPage > 0) {
+            currentProjectPage -= 1;
+            renderProjectPage();
+          }
+        });
+        document.querySelector("#next-projects")?.addEventListener("click", () => {
+          if (currentProjectPage < totalPages - 1) {
+            currentProjectPage += 1;
+            renderProjectPage();
+          }
+        });
       }
 
       fetch(apiUrl, { headers: { accept: "application/json" } })
@@ -660,12 +856,12 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
         <p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p>
       </section>
       <div class="matching-layout">
-        <section class="matching-panel" aria-labelledby="talent-list-heading">
+        <section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading">
           <h2 id="talent-list-heading">人材一覧</h2>
           <p>案件にマッチする人材を一覧で確認する領域です。</p>
           <div class="matching-placeholder">人材一覧は未実装です。</div>
         </section>
-        <section class="matching-panel" aria-labelledby="talent-detail-heading">
+        <section class="matching-panel talent-detail-panel" aria-labelledby="talent-detail-heading">
           <h2 id="talent-detail-heading">人材詳細</h2>
           <p>選択した人材の詳細を表示する領域です。</p>
           <div class="matching-placeholder">人材を選択すると詳細が表示されます。</div>
@@ -676,8 +872,6 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
 }
 
 function renderProjectMatchesClientPage(id: string): string {
-  const serializedTalents = JSON.stringify(mockTalents).replaceAll("<", "\\u003c");
-
   return pageShell("案件マッチング", `
     <section id="matching-root" class="panel" data-project-id="${id}">
       <div class="state-box" role="status" aria-live="polite">
@@ -687,8 +881,14 @@ function renderProjectMatchesClientPage(id: string): string {
     <script>
       const matchingRoot = document.querySelector("#matching-root");
       const projectId = matchingRoot.dataset.projectId;
-      const mockTalents = ${serializedTalents};
-      let visibleTalentCount = Math.min(20, mockTalents.length);
+      const pageSize = 10;
+      let currentPage = 0;
+      let totalTalentCount = 0;
+      let sourceExpanded = false;
+      let pageCursors = [null];
+      let pageTalents = [];
+      let talentPageLoading = false;
+      let talentLoadError = null;
       let selectedTalentId = null;
 
       function escapeHtml(value) {
@@ -707,27 +907,34 @@ function renderProjectMatchesClientPage(id: string): string {
 
       function renderTalentList(talents) {
         if (talents.length === 0) {
-          return '<div class="matching-placeholder">表示できる人材がありません。</div>';
+          return talentPageLoading
+            ? '<div class="matching-placeholder">人材を読み込み中です。</div>'
+            : '<div class="matching-placeholder">表示できる人材がありません。</div>';
         }
 
-        const visibleTalents = talents.slice(0, visibleTalentCount);
-        const loadMoreMarkup = visibleTalentCount < talents.length
-          ? '<button type="button" class="button load-more" id="load-more-talents">さらに表示</button>'
-          : '';
+        const totalPages = Math.max(1, Math.ceil(totalTalentCount / pageSize));
+        const paginationMarkup = '<div class="pagination" aria-label="人材一覧ページ移動">' +
+          '<button type="button" class="button" id="previous-talents"' + (currentPage === 0 || talentPageLoading ? ' disabled' : '') + '>前へ</button>' +
+          '<span aria-live="polite">' + (currentPage + 1) + ' / ' + totalPages + 'ページ</span>' +
+          '<button type="button" class="button" id="next-talents"' + (currentPage >= totalPages - 1 || talentPageLoading ? ' disabled' : '') + '>次へ</button>' +
+          '</div>';
 
-        return '<p class="talent-count" aria-live="polite">' + visibleTalents.length + ' / ' + talents.length + '人表示</p>' +
-          '<div class="talent-list">' + visibleTalents.map((talent) =>
+        return (talentLoadError ? '<p class="error-state" role="alert">人材情報を取得できませんでした。<button type="button" class="button" id="retry-talents">再試行</button></p>' : '') +
+          '<p class="talent-count" aria-live="polite">' + talents.length + ' / ' + totalTalentCount + '人表示</p>' +
+          '<div class="talent-list">' + talents.map((talent) =>
           '<button type="button" class="talent-card" data-talent-id="' + escapeHtml(talent.id) + '" aria-pressed="' + (talent.id === selectedTalentId ? 'true' : 'false') + '">' +
-            '<h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
-            '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
-            '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
-            '<p>希望勤務形態: ' + escapeHtml(talent.desiredWorkStyle) + '</p>' +
-            '<p>所属: ' + escapeHtml(talent.affiliation) + '</p>' +
-            '<div class="talent-skills" aria-label="技術スキル">' +
-              talent.technicalSkills.map((skill) => '<span class="skill">' + escapeHtml(skill) + '</span>').join('') +
+            '<div class="talent-card-main"><h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
+              '<div class="talent-skills" aria-label="技術スキル">' +
+                (talent.technicalSkills.length > 0
+                  ? talent.technicalSkills.map((skill) => escapeHtml(skill)).join(' / ')
+                  : 'スキル未設定') +
+              '</div></div>' +
+            '<div class="talent-card-meta">' +
+              '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
+              '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
             '</div>' +
           '</button>'
-        ).join('') + '</div>' + loadMoreMarkup;
+        ).join('') + '</div>' + paginationMarkup;
       }
 
       function renderTalentDetail(talent) {
@@ -742,17 +949,23 @@ function renderProjectMatchesClientPage(id: string): string {
           '<div class="talent-detail-item"><strong>最寄り駅</strong><div>' + escapeHtml(talent.nearestStation) + '</div></div>' +
           '<div class="talent-detail-item"><strong>希望勤務形態</strong><div>' + escapeHtml(talent.desiredWorkStyle) + '</div></div>' +
           '<div class="talent-detail-item"><strong>所属</strong><div>' + escapeHtml(talent.affiliation) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>人材メールの原文</strong><div class="source-text">' +
+            (talent.sourceText === null || talent.sourceText === undefined
+              ? '人材メールの原文は未登録です'
+              : escapeHtml(talent.sourceText)) +
+          '</div></div>' +
         '</div>';
       }
 
       function updateTalentSelection(talentId) {
         selectedTalentId = talentId;
-        const selectedTalent = mockTalents.find((talent) => talent.id === selectedTalentId);
+        const selectedTalent = pageTalents.find((talent) => talent.id === selectedTalentId);
         document.querySelectorAll('[data-talent-id]').forEach((card) => {
           card.setAttribute('aria-pressed', card.dataset.talentId === selectedTalentId ? 'true' : 'false');
         });
         const detailRoot = document.querySelector('#talent-detail-root');
         detailRoot.innerHTML = renderTalentDetail(selectedTalent);
+        detailRoot.scrollTop = 0;
       }
 
       function bindTalentInteractions() {
@@ -766,15 +979,53 @@ function renderProjectMatchesClientPage(id: string): string {
           });
         });
 
-        const loadMoreButton = document.querySelector('#load-more-talents');
-        loadMoreButton?.addEventListener('click', () => {
-          visibleTalentCount = Math.min(visibleTalentCount + 20, mockTalents.length);
-          document.querySelector('#talent-list-root').innerHTML = renderTalentList(mockTalents);
-          bindTalentInteractions();
+        document.querySelector('#previous-talents')?.addEventListener('click', () => loadTalentPage(currentPage - 1));
+        document.querySelector('#next-talents')?.addEventListener('click', () => loadTalentPage(currentPage + 1));
+        document.querySelector('#retry-talents')?.addEventListener('click', () => loadTalentPage(currentPage));
+      }
+
+      function bindSourceToggle() {
+        const toggle = document.querySelector('#source-text-toggle');
+        const source = document.querySelector('#project-source-text');
+        if (!toggle || !source) return;
+        toggle.addEventListener('click', () => {
+          sourceExpanded = !sourceExpanded;
+          source.hidden = !sourceExpanded;
+          toggle.textContent = sourceExpanded ? '原文を閉じる' : '原文を開く';
+          toggle.setAttribute('aria-expanded', String(sourceExpanded));
         });
       }
 
+      async function loadTalentPage(targetPage) {
+        const totalPages = Math.max(1, Math.ceil(totalTalentCount / pageSize));
+        if (talentPageLoading || targetPage < 0 || targetPage >= totalPages) return;
+        const cursor = pageCursors[targetPage];
+        if (targetPage > 0 && !cursor) return;
+        talentPageLoading = true;
+        talentLoadError = null;
+        const listRoot = document.querySelector('#talent-list-root');
+        if (listRoot) listRoot.innerHTML = renderTalentList(pageTalents);
+        const query = cursor ? '&cursor=' + encodeURIComponent(cursor) : '';
+        try {
+          const response = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/matches?limit=' + pageSize + query, { headers: { accept: 'application/json' } });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error?.code || 'TALENTS_UNAVAILABLE');
+          currentPage = targetPage;
+          pageTalents = Array.isArray(data.talents) ? data.talents : [];
+          totalTalentCount = Number.isInteger(data.totalCount) ? data.totalCount : 0;
+          pageCursors[targetPage + 1] = data.nextCursor ?? null;
+        } catch {
+          talentLoadError = true;
+        } finally {
+          talentPageLoading = false;
+          if (listRoot) listRoot.innerHTML = renderTalentList(pageTalents);
+          listRoot?.querySelector('.talent-list')?.scrollTo(0, 0);
+          bindTalentInteractions();
+        }
+      }
+
       function renderProject(project) {
+        sourceExpanded = false;
         const skills = Array.isArray(project.requiredSkills) ? project.requiredSkills : [];
         const skillMarkup = skills.length > 0
           ? skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("")
@@ -793,19 +1044,21 @@ function renderProjectMatchesClientPage(id: string): string {
             '<div class="detail-item"><dt>募集人数</dt><dd>' + escapeHtml(value(project.headcount)) + "</dd></div>" +
             '<div class="detail-item"><dt>工程</dt><dd>' + escapeHtml(value(project.process)) + "</dd></div>" +
           "</dl>" +
-          '<section class="detail-section"><h2>案件メールの原文</h2><p class="source-text">' +
+          '<section class="detail-section"><div class="source-header"><h2>案件メールの原文</h2><button type="button" class="button source-toggle" id="source-text-toggle" aria-expanded="false">原文を開く</button></div><div id="project-source-text" hidden><p class="source-text">' +
             (project.sourceText === null || project.sourceText === undefined
               ? "メール原文未登録"
               : escapeHtml(project.sourceText)) +
-          "</p></section>" +
+          "</p></div></section>" +
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
-            '<section class="matching-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>画面確認用の架空データを表示しています。</p><div id="talent-list-root">' + renderTalentList(mockTalents) + '</div></section>' +
-            '<section class="matching-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
+            '<section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>モックAPIから取得した画面確認用データを表示しています。</p><div id="talent-list-root">' + renderTalentList(pageTalents) + '</div></section>' +
+            '<section class="matching-panel talent-detail-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
           "</div>";
 
+        bindSourceToggle();
         bindTalentInteractions();
+        loadTalentPage(0);
       }
 
       fetch("/api/projects/" + encodeURIComponent(projectId), { headers: { accept: "application/json" } })
@@ -987,6 +1240,30 @@ async function handleTalentByIdApi(id: string, response: ServerResponse): Promis
   }
 }
 
+function handleProjectMatchesApi(projectId: string, url: URL, response: ServerResponse): void {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? mockTalentPageSize);
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > mockTalentPageSize) {
+    sendJson(response, 400, { error: { code: "INVALID_LIMIT", message: "Limit must be between 1 and 10." } });
+    return;
+  }
+
+  const cursor = url.searchParams.get("cursor");
+  const offset = cursor ? decodeTalentCursor(cursor, projectId) : 0;
+  if (offset === null) {
+    sendJson(response, 400, { error: { code: "INVALID_CURSOR", message: "Cursor is invalid." } });
+    return;
+  }
+
+  const talents = mockTalents.slice(offset, offset + requestedLimit).map(mockTalentResponse);
+  const nextOffset = offset + talents.length;
+  sendJson(response, 200, {
+    talents,
+    totalCount: mockTalents.length,
+    nextCursor: nextOffset < mockTalents.length ? encodeTalentCursor(projectId, nextOffset) : null,
+    hasMore: nextOffset < mockTalents.length
+  });
+}
+
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
@@ -1003,6 +1280,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   if (url.pathname === "/api/talents") {
     await handleTalentsApi(response);
+    return;
+  }
+
+  const matchesApiRoute = /^\/api\/projects\/([^/]+)\/matches$/.exec(url.pathname);
+  if (matchesApiRoute?.[1]) {
+    handleProjectMatchesApi(decodeURIComponent(matchesApiRoute[1]), url, response);
     return;
   }
 
