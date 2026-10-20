@@ -1,9 +1,9 @@
-import { parseGraphResponse, type GraphMessageResult } from "./graph-adapter.ts";
+import { parseGraphMailMessage, parseGraphResponse, type GraphMessageResult } from "./graph-adapter.ts";
 import type { GraphConfig } from "./graph-config.ts";
 import type { GraphTokenProvider } from "./graph-auth.ts";
 
 export type GraphClientFetch = (input: string, init?: RequestInit) => Promise<Response>;
-export type GraphClientErrorCategory = "authentication" | "temporary" | "timeout" | "validation" | "unknown";
+export type GraphClientErrorCategory = "authentication" | "temporary" | "permanent" | "timeout" | "validation" | "unknown";
 
 export class GraphClientError extends Error {
   readonly category: GraphClientErrorCategory;
@@ -67,6 +67,37 @@ export class GraphMailClient {
       pageUrl = page.nextLink;
     }
     return { mailboxId, messages, nextLinkPresent: false, pagesFetched };
+  }
+
+  async fetchMessage(mailboxId: string, graphMessageId: string): Promise<GraphMessageResult> {
+    if (!this.config.mailboxes.includes(mailboxId)) throw new GraphClientError("許可されたメールボックスではありません", "validation");
+    if (!graphMessageId) throw new GraphClientError("GraphメッセージIDが必要です", "validation");
+    const token = await this.tokenProvider.getAccessToken();
+    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailboxId)}/messages/${encodeURIComponent(graphMessageId)}?$select=id,subject,from,receivedDateTime,body,lastModifiedDateTime`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response;
+    try { response = await this.fetcher(url, { method: "GET", headers: { Authorization: `Bearer ${token}`, Accept: "application/json", Prefer: 'outlook.body-content-type="text"' }, signal: controller.signal }); }
+    catch (error) { if (error instanceof DOMException && error.name === "AbortError") throw new GraphClientError("Graphメール取得がタイムアウトしました", "timeout"); throw new GraphClientError("Graphメール取得への接続に失敗しました", "temporary"); }
+    finally { clearTimeout(timer); }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    if (!response.ok) {
+      const temporary = response.status === 429 || response.status >= 500;
+      const category = temporary ? "temporary" : response.status === 401 || response.status === 403 ? "authentication" : response.status === 404 ? "permanent" : "unknown";
+      const options: { status: number; retryAfterSeconds?: number } = { status: response.status };
+      if (Number.isFinite(retryAfter)) options.retryAfterSeconds = retryAfter;
+      throw new GraphClientError(temporary ? "Graphメール取得サービスが一時的に利用できません" : response.status === 404 ? "Graphメールが見つかりません" : `Graphメール取得に失敗しました（HTTP ${response.status}）`, category, options);
+    }
+    let json: unknown;
+    try { json = await response.json(); } catch { throw new GraphClientError("Graphメール応答のJSONが不正です", "validation"); }
+    try {
+      const parsed = parseGraphMailMessage(json, mailboxId);
+      if (parsed.kind === "removed") throw new GraphClientError("Graphメールは削除済みです", "permanent");
+      return parsed;
+    } catch (error) {
+      if (error instanceof GraphClientError) throw error;
+      throw new GraphClientError("Graphメール応答の形式が不正です", "validation");
+    }
   }
 
   private async fetchPage(pageUrl: string, token: string, mailboxId: string, pageNumber: number): Promise<{ messages: GraphMessageResult[]; nextLink?: string }> {

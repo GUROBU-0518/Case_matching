@@ -16,7 +16,8 @@
     "batch:db": "node --experimental-strip-types src/db/mail-batch-cli.ts",
     "batch:memory": "node --experimental-strip-types src/batch/mail-batch-cli.ts",
     "graph:fetch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-mail-cli.ts",
-    "graph:delta": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-delta-cli.ts"
+    "graph:delta": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-delta-cli.ts",
+    "graph:batch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-batch-cli.ts"
   },
   "engines": {
     "node": ">=20"

@@ -38,9 +38,12 @@ export class GraphDeltaClient {
       pageUrl = page.nextLink; if (!pageUrl) finalDelta = page.deltaLink;
     }
     if (!finalDelta) throw new GraphClientError("Deltaレスポンスに最終deltaLinkがありません", "validation");
-    await this.store.set(mailboxId, finalDelta);
     const newMessages = changes.filter((change): change is { kind: "new"; message: Extract<GraphMessageResult, { kind: "message" }> } => change.kind === "new").map((change) => change.message);
     return { mailboxId, changes, newMessages, deltaLink: finalDelta, pagesFetched };
+  }
+  async commitDeltaLink(mailboxId: string, deltaLink: string): Promise<void> {
+    if (!this.config.mailboxes.includes(mailboxId)) throw new GraphClientError("許可されたメールボックスではありません", "validation");
+    await this.store.set(mailboxId, deltaLink);
   }
   private readonly knownMessageIds: ReadonlySet<string> | undefined;
   private initialUrl(mailboxId: string, top: number): string {

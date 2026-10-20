@@ -3,7 +3,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import type { CommonEmail } from "../mail/types.ts";
 import type { MailBatchResult, MailItemResult } from "../batch/mail-batch.ts";
 
-export interface RetryCandidate { id: string; mailMessageId: string | null; graphMessageId: string; status: string; errorType: string | null; retryCount: number; }
+export interface RetryCandidate { id: string; mailMessageId: string | null; mailboxId: string | null; graphMessageId: string; status: string; errorType: string | null; retryCount: number; }
 export interface PersistBatchSummary { persistedMailCount: number; skippedProcessedCount: number; persistedProcessingCount: number; dbSaveFailureCount: number; batchRunId?: string; batchRunSaved: boolean; }
 
 function mailData(email: CommonEmail): Prisma.MailMessageCreateInput {
@@ -14,18 +14,21 @@ function mailData(email: CommonEmail): Prisma.MailMessageCreateInput {
   };
 }
 
-export async function persistMailResult(prisma: PrismaClient, email: CommonEmail, result: MailItemResult): Promise<{ skipped: boolean }> {
+export interface PersistMailOptions { isBatchRetry?: boolean }
+
+export async function persistMailResult(prisma: PrismaClient, email: CommonEmail, result: MailItemResult, options: PersistMailOptions = {}): Promise<{ skipped: boolean }> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.mailMessage.findUnique({ where: { mailboxId_graphMessageId: { mailboxId: email.mailboxId, graphMessageId: email.messageId } }, include: { aiProcessing: true } });
     if (existing?.aiProcessing?.status === "succeeded") return { skipped: true };
     const mail = existing ?? await tx.mailMessage.create({ data: mailData(email) });
+    const retryCount = options.isBatchRetry ? (existing?.aiProcessing?.retryCount ?? 0) + 1 : 0;
     const processingData = {
       status: result.status,
       startedAt: new Date(), endedAt: new Date(),
       errorType: result.errorCategory ?? null,
       errorMessage: result.error ?? null,
-      retryCount: result.retryCount,
-      lastRetriedAt: result.retryCount > 0 ? new Date() : null,
+      retryCount,
+      lastRetriedAt: options.isBatchRetry ? new Date() : existing?.aiProcessing?.lastRetriedAt ?? null,
       zodValidationStatus: result.success ? "succeeded" : "failed",
       graphMessageId: email.messageId,
     };
@@ -38,7 +41,7 @@ export async function persistMailResult(prisma: PrismaClient, email: CommonEmail
   });
 }
 
-export async function persistMailBatch(prisma: PrismaClient, emails: CommonEmail[], result: MailBatchResult): Promise<PersistBatchSummary> {
+export async function persistMailBatch(prisma: PrismaClient, emails: CommonEmail[], result: MailBatchResult, options: PersistMailOptions = {}): Promise<PersistBatchSummary> {
   if (emails.length !== result.items.length) throw new Error("メールと処理結果の件数が一致しません");
   let persistedMailCount = 0;
   let skippedProcessedCount = 0;
@@ -48,7 +51,7 @@ export async function persistMailBatch(prisma: PrismaClient, emails: CommonEmail
     const item = result.items[index];
     if (!item) throw new Error(`処理結果がありません: ${email.messageId}`);
     let saved: { skipped: boolean };
-    try { saved = await persistMailResult(prisma, email, item); } catch { dbSaveFailureCount += 1; continue; }
+    try { saved = await persistMailResult(prisma, email, item, options); } catch { dbSaveFailureCount += 1; continue; }
     if (saved.skipped) skippedProcessedCount += 1;
     else { persistedMailCount += 1; persistedProcessingCount += 1; }
   }
@@ -61,14 +64,28 @@ export async function persistMailBatch(prisma: PrismaClient, emails: CommonEmail
   return { persistedMailCount, skippedProcessedCount, persistedProcessingCount, dbSaveFailureCount, batchRunId: batchRun.id, batchRunSaved: true };
 }
 
-export async function findRetryCandidates(prisma: PrismaClient): Promise<RetryCandidate[]> {
+export async function findRetryCandidates(prisma: PrismaClient, mailboxId?: string): Promise<RetryCandidate[]> {
   const rows = await prisma.aiProcessing.findMany({
-    where: { status: "failed", errorType: "temporary", mailMessageId: { not: null } },
-    select: { id: true, mailMessageId: true, graphMessageId: true, status: true, errorType: true, retryCount: true },
+    where: { status: "failed", errorType: "temporary", mailMessageId: { not: null }, ...(mailboxId ? { mailMessage: { mailboxId } } : {}) },
+    select: { id: true, mailMessageId: true, graphMessageId: true, status: true, errorType: true, retryCount: true, mailMessage: { select: { mailboxId: true } } },
   });
-  return rows;
+  return rows.map((row) => ({ ...row, mailboxId: row.mailMessage?.mailboxId ?? null }));
 }
 
 export function isEligibleForNextBatchRetry(processing: { status: string; errorType: string | null; retryCount: number }): boolean {
   return processing.status === "failed" && processing.errorType === "temporary" && processing.retryCount < 3;
+}
+
+export async function recordRetryFailure(prisma: PrismaClient, candidate: RetryCandidate, errorType: "temporary" | "permanent" | "unknown", message: string): Promise<void> {
+  await prisma.aiProcessing.update({
+    where: { id: candidate.id },
+    data: {
+      status: "failed",
+      errorType,
+      errorMessage: message,
+      retryCount: errorType === "temporary" ? candidate.retryCount + 1 : candidate.retryCount,
+      lastRetriedAt: errorType === "temporary" ? new Date() : null,
+      endedAt: new Date(),
+    },
+  });
 }

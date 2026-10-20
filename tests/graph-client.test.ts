@@ -12,6 +12,12 @@ describe("GraphMailClient", () => {
     expect(result.messages[0]).toMatchObject({ kind: "message", contentType: "text", email: { mailboxId: "a@example.com", messageId: "m1" } });
   });
   it("許可外メールボックスと不正な件数を拒否する", async () => { const client = new GraphMailClient(config, tokenProvider, { fetcher: async () => new Response() }); await expect(client.fetchMailbox("x@example.com")).rejects.toMatchObject({ category: "validation" }); await expect(client.fetchMailbox("a@example.com", 0)).rejects.toMatchObject({ category: "validation" }); });
+  it("GraphメッセージID指定で1件をCommonEmailへ変換する", async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => { expect(url).toContain("/users/a%40example.com/messages/m%2F1"); expect(init?.headers).toMatchObject({ Authorization: "Bearer access-token" }); return new Response(JSON.stringify(payload("m/1").value[0]), { status: 200 }); });
+    const result = await new GraphMailClient(config, tokenProvider, { fetcher }).fetchMessage("a@example.com", "m/1");
+    expect(result).toMatchObject({ kind: "message", email: { mailboxId: "a@example.com", messageId: "m/1" } });
+  });
+  it("Graphメッセージ404を再取得不能として扱う", async () => { const client = new GraphMailClient(config, tokenProvider, { fetcher: async () => new Response("{}", { status: 404 }) }); await expect(client.fetchMessage("a@example.com", "missing")).rejects.toMatchObject({ category: "permanent", retryable: false, status: 404 }); });
   it("nextLinkを辿って全ページを変換する", async () => {
     const fetcher = vi.fn(async (url: string) => url.includes("/next")
       ? new Response(JSON.stringify({ value: [{ id: "m2", subject: "次", from: { emailAddress: { address: "b@example.com" } }, receivedDateTime: "2026-01-02T00:00:00Z", body: { contentType: "text", content: "次本文" } }] }))
