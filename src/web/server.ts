@@ -2,6 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { getPrismaClient } from "../db/client.ts";
 import type { Project, Talent } from "../domain/schemas.ts";
 import { projectSchema, talentSchema } from "../domain/schemas.ts";
+import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../domain/talent-filter.ts";
+import { matchesTalentSearch } from "../domain/talent-search.ts";
+import { matchesProjectSearch } from "../domain/project-search.ts";
+import { mockTalents as mockTalentRecords } from "../mock/talents.ts";
 
 const defaultPort = 3000;
 
@@ -342,6 +346,112 @@ function pageShell(title: string, body: string): string {
       margin-top: 10px;
     }
 
+    .talent-list-page-panel .talent-grid {
+      display: grid;
+      gap: 6px;
+    }
+
+    .talent-list-page-panel .talent-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(220px, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      min-height: 58px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .talent-list-page-panel .talent-card h2,
+    .talent-list-page-panel .talent-card p {
+      min-width: 0;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .talent-list-page-panel .talent-card h2 {
+      margin-bottom: 3px;
+      font-size: 15px;
+      line-height: 1.2;
+    }
+
+    .talent-list-page-panel .talent-card p {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .talent-list-page-panel .talent-card-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3px 12px;
+      min-width: 0;
+    }
+
+    .talent-list-page-panel .talent-card-actions {
+      display: flex;
+      justify-content: end;
+    }
+
+    .talent-list-page-panel .talent-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .talent-filter-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .talent-filter-controls label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .talent-filter-controls select {
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .talent-search-form {
+      display: flex;
+      align-items: end;
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+
+    .talent-search-form label {
+      display: grid;
+      flex: 1;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .talent-search-form input {
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      font: inherit;
+    }
+
     .button,
     .back-link {
       display: inline-flex;
@@ -656,6 +766,14 @@ function pageShell(title: string, body: string): string {
         align-items: stretch;
       }
 
+      .talent-list-page-panel .talent-card {
+        grid-template-columns: 1fr;
+      }
+
+      .talent-list-page-panel .talent-card-actions {
+        justify-content: start;
+      }
+
       .project-card .meta {
         flex-wrap: wrap;
       }
@@ -695,7 +813,10 @@ function pageShell(title: string, body: string): string {
 </html>`;
 }
 
-function renderProjectsPage(): string {
+function renderProjectsPage(initialState: { query?: string | undefined; page?: number | undefined } = {}): string {
+  const initialQuery = String(initialState.query ?? "").replace(/[ \u3000]+/gu, " ").trim();
+  const initialPage = Number.isInteger(initialState.page) && (initialState.page ?? 1) > 0 ? initialState.page ?? 1 : 1;
+  const scriptValue = (value: unknown): string => JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
   return pageShell("案件一覧", `
     <section class="panel project-list-panel">
       <div class="toolbar">
@@ -703,7 +824,15 @@ function renderProjectsPage(): string {
           <h1 class="page-title">案件一覧</h1>
           <p class="lead">案件取得APIから取得した案件を表示します。</p>
         </div>
+        <a class="button" href="/talents">人材一覧へ</a>
       </div>
+      <form id="project-search-form" class="talent-search-form">
+        <label for="project-search-input">キーワード検索
+          <input id="project-search-input" type="search" placeholder="Java、大森、80万円など">
+        </label>
+        <button class="button" type="submit">検索</button>
+        <button class="button" type="button" id="project-search-clear">クリア</button>
+      </form>
       <p class="notice">認証、実DB接続、マッチング画面への移動は今回の対象外です。</p>
       <div id="projects-root" class="project-grid">
         <div class="state-box" role="status" aria-live="polite">
@@ -716,12 +845,12 @@ function renderProjectsPage(): string {
     </section>
     <script>
       const projectsRoot = document.querySelector("#projects-root");
-      const searchParams = new URLSearchParams(window.location.search);
-      const apiState = searchParams.get("apiState");
-      const apiUrl = apiState ? "/api/projects?state=" + encodeURIComponent(apiState) : "/api/projects";
+      const initialQuery = ${scriptValue(initialQuery)};
+      const initialPage = ${initialPage - 1};
       const projectPageSize = 10;
       let allProjects = [];
-      let currentProjectPage = 0;
+      let currentProjectPage = initialPage;
+      let appliedQuery = initialQuery;
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -742,7 +871,7 @@ function renderProjectsPage(): string {
 
       function renderProjects(projects) {
         if (projects.length === 0) {
-          renderState("表示できる案件がありません", "DBまたはAPIから0件が返りました。");
+          renderState(appliedQuery ? "該当する案件がありません" : "表示できる案件がありません", appliedQuery ? "検索条件を変更してください。" : "DBまたはAPIから0件が返りました。");
           return;
         }
 
@@ -772,7 +901,7 @@ function renderProjectsPage(): string {
               "</ul>" +
               "<p>" + escapeHtml(project.summary) + "</p>" +
             "</div>" +
-            '<div class="project-actions"><a class="button" href="/projects/' + encodeURIComponent(project.id) + '/matches">この案件を選択</a></div>' +
+              '<div class="project-actions"><a class="button" href="/projects/' + encodeURIComponent(project.id) + '/matches?q=' + encodeURIComponent(appliedQuery) + '&page=' + (currentProjectPage + 1) + '">この案件を選択</a></div>' +
           "</article>";
         }).join("") +
           '<div class="project-pagination" aria-label="案件一覧ページ移動">' +
@@ -795,17 +924,30 @@ function renderProjectsPage(): string {
         });
       }
 
-      fetch(apiUrl, { headers: { accept: "application/json" } })
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error("API request failed");
-          }
-          return response.json();
-        })
-        .then((data) => renderProjects(Array.isArray(data.projects) ? data.projects : []))
-        .catch(() => {
-          renderState("案件一覧を表示できません", "API通信またはDB接続で失敗した場合の表示です。", "alert");
-        });
+      async function loadProjects(query = appliedQuery, resetPage = false) {
+        appliedQuery = String(query ?? '').replace(/[ \\u3000]+/gu, ' ').trim();
+        if (resetPage) currentProjectPage = 0;
+        projectsRoot.innerHTML = '<div class="state-box" role="status" aria-live="polite"><div><strong>読み込み中です</strong><span>案件取得APIへ接続しています。</span></div></div>';
+        try {
+          const queryParameter = appliedQuery ? '?q=' + encodeURIComponent(appliedQuery) : '';
+          const response = await fetch('/api/projects' + queryParameter, { headers: { accept: 'application/json' } });
+          if (!response.ok) throw new Error('projects');
+          const data = await response.json();
+          renderProjects(Array.isArray(data.projects) ? data.projects : []);
+        } catch {
+          renderState('案件一覧を表示できません', 'API通信またはDB接続で失敗した場合の表示です。', 'alert');
+        }
+      }
+      document.querySelector('#project-search-form')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        loadProjects(document.querySelector('#project-search-input').value, true);
+      });
+      document.querySelector('#project-search-clear')?.addEventListener('click', () => {
+        document.querySelector('#project-search-input').value = '';
+        loadProjects('', true);
+      });
+      document.querySelector('#project-search-input').value = appliedQuery;
+      loadProjects(appliedQuery);
     </script>
   `);
 }
@@ -871,7 +1013,10 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
   `);
 }
 
-function renderProjectMatchesClientPage(id: string): string {
+function renderProjectMatchesClientPage(id: string, returnState: { query?: string | undefined; page?: number | undefined } = {}): string {
+  const query = String(returnState.query ?? "").replace(/[ \u3000]+/gu, " ").trim();
+  const page = Number.isInteger(returnState.page) && (returnState.page ?? 1) > 0 ? returnState.page ?? 1 : 1;
+  const returnQuery = new URLSearchParams({ ...(query ? { q: query } : {}), page: String(page) }).toString();
   return pageShell("案件マッチング", `
     <section id="matching-root" class="panel" data-project-id="${id}">
       <div class="state-box" role="status" aria-live="polite">
@@ -1033,7 +1178,7 @@ function renderProjectMatchesClientPage(id: string): string {
         const value = (item) => item === null || item === undefined ? "未設定" : item;
 
         matchingRoot.innerHTML =
-          '<p><a class="back-link" href="/projects">← 案件一覧へ戻る</a></p>' +
+          '<p><a class="back-link" href="/projects?${escapeHtml(returnQuery)}">← 案件一覧へ戻る</a></p>' +
           '<h1 class="page-title">' + escapeHtml(value(project.projectName) || "案件名未設定") + "</h1>" +
           '<p class="lead">' + escapeHtml(value(project.summary) || "概要未設定") + "</p>" +
           '<dl class="detail-grid">' +
@@ -1107,11 +1252,34 @@ function talentResponse(record: { id: string } & Record<string, unknown>): ApiTa
   return { id: record.id, ...talentSchema.parse(record) };
 }
 
-function renderTalentsPage(): string {
+function renderTalentsPage(initialState: { period?: string | undefined; query?: string | undefined; page?: number | undefined } = {}): string {
+  const initialPeriod = initialState.period === "2" || initialState.period === "3" || initialState.period === "all" ? initialState.period : "1";
+  const initialQuery = String(initialState.query ?? "").replace(/[ \u3000]+/gu, " ").trim();
+  const initialPage = Number.isInteger(initialState.page) && (initialState.page ?? 1) > 0 ? initialState.page ?? 1 : 1;
+  const scriptValue = (value: unknown): string => JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
   return pageShell("人材一覧", `
     <main class="page-shell">
-      <section class="panel" aria-labelledby="talents-heading">
-        <h1 id="talents-heading" class="page-title">人材一覧</h1>
+      <section class="panel talent-list-page-panel" aria-labelledby="talents-heading">
+        <div class="toolbar">
+          <h1 id="talents-heading" class="page-title">人材一覧</h1>
+          <div class="talent-filter-controls">
+            <label for="talent-registration-period">登録期間</label>
+            <select id="talent-registration-period">
+              <option value="1" selected>1か月前から</option>
+              <option value="2">2か月前から</option>
+              <option value="3">3か月前から</option>
+              <option value="all">全期間</option>
+            </select>
+            <a class="button" href="/projects">案件一覧に戻る</a>
+          </div>
+        </div>
+        <form id="talent-search-form" class="talent-search-form">
+          <label for="talent-search-input">キーワード検索
+            <input id="talent-search-input" type="search" placeholder="Java、新宿、91万円など">
+          </label>
+          <button class="button" type="submit">検索</button>
+          <button class="button" type="button" id="talent-search-clear">クリア</button>
+        </form>
         <p class="lead">登録済みの人材情報を表示します。</p>
         <div id="talents-root" aria-live="polite"><p>読み込み中です。</p></div>
       </section>
@@ -1119,29 +1287,89 @@ function renderTalentsPage(): string {
     <script>
       const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
-      function renderTalents(talents) {
-        if (!talents.length) return '<p class="empty-state">人材が登録されていません。</p>';
-        return '<div class="project-grid">' + talents.map((talent) =>
-          '<article class="panel"><h2>' + display(talent.id) + '</h2>' +
-          '<p>技術スキル: ' + display((talent.technicalSkills || []).join("、")) + '</p>' +
-          '<p>経験工程: ' + display((talent.availableProcess || []).join("、")) + '</p>' +
-          '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
-          '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
-          '<a class="button" href="/talents/' + encodeURIComponent(talent.id) + '">詳細を見る</a></article>'
-        ).join('') + '</div>';
+      const pageSize = 10;
+      let allTalents = [];
+      let selectedPeriod = ${scriptValue(initialPeriod)};
+      let appliedQuery = ${scriptValue(initialQuery)};
+      let currentTalentPage = ${initialPage - 1};
+      function renderTalents() {
+        const totalPages = Math.max(1, Math.ceil(allTalents.length / pageSize));
+        currentTalentPage = Math.min(currentTalentPage, totalPages - 1);
+        if (!allTalents.length) return appliedQuery
+          ? '<p class="empty-state">検索条件に一致する人材が見つかりませんでした。キーワードや登録期間を変更してください。</p>'
+          : '<p class="empty-state">人材が登録されていません。</p>';
+        const start = currentTalentPage * pageSize;
+        const pageTalents = allTalents.slice(start, start + pageSize);
+        return '<p class="talent-count">全' + allTalents.length + '名</p>' +
+          '<div class="talent-grid">' + pageTalents.map((talent) =>
+            '<article class="talent-card">' +
+              '<div><h2>' + display(talent.id) + '</h2>' +
+                '<p title="' + display((talent.technicalSkills || []).join("、")) + '">技術スキル: ' + display((talent.technicalSkills || []).join("、")) + '</p></div>' +
+              '<div class="talent-card-meta">' +
+                '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
+                '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
+                '<p title="' + display((talent.availableProcess || []).join("、")) + '">経験工程: ' + display((talent.availableProcess || []).join("、")) + '</p>' +
+              '</div>' +
+              '<div class="talent-card-actions"><a class="button" href="/talents/' + encodeURIComponent(talent.id) + '?period=' + encodeURIComponent(selectedPeriod) + '&q=' + encodeURIComponent(appliedQuery) + '&page=' + (currentTalentPage + 1) + '">詳細を見る</a></div>' +
+            '</article>'
+          ).join('') + '</div>' +
+          '<div class="talent-pagination" aria-label="人材一覧ページ移動">' +
+            '<button type="button" class="button" id="previous-talents"' + (currentTalentPage === 0 ? ' disabled' : '') + '>前へ</button>' +
+            '<span aria-live="polite">' + (currentTalentPage + 1) + ' / ' + totalPages + 'ページ</span>' +
+            '<button type="button" class="button" id="next-talents"' + (currentTalentPage >= totalPages - 1 ? ' disabled' : '') + '>次へ</button>' +
+          '</div>';
       }
-      fetch('/api/talents').then((response) => response.ok ? response.json() : Promise.reject(new Error('talents')))
-        .then((data) => { document.querySelector('#talents-root').innerHTML = renderTalents(Array.isArray(data.talents) ? data.talents : []); })
-        .catch(() => { document.querySelector('#talents-root').innerHTML = '<p class="error-state">人材情報を取得できませんでした。</p>'; });
+      function updateTalents() {
+        document.querySelector('#talents-root').innerHTML = renderTalents();
+        document.querySelector('#previous-talents')?.addEventListener('click', () => { currentTalentPage -= 1; updateTalents(); });
+        document.querySelector('#next-talents')?.addEventListener('click', () => { currentTalentPage += 1; updateTalents(); });
+      }
+      async function loadTalents(period, query = appliedQuery, resetPage = false) {
+        selectedPeriod = period;
+        appliedQuery = String(query ?? '').replace(/[ \\u3000]+/gu, ' ').trim();
+        if (resetPage) currentTalentPage = 0;
+        document.querySelector('#talents-root').innerHTML = '<p>読み込み中です。</p>';
+        try {
+          const queryParameter = appliedQuery ? '&q=' + encodeURIComponent(appliedQuery) : '';
+          const response = await fetch('/api/talents?period=' + encodeURIComponent(period) + queryParameter);
+          if (!response.ok) throw new Error('talents');
+          const data = await response.json();
+          allTalents = Array.isArray(data.talents) ? data.talents : [];
+          updateTalents();
+        } catch {
+          document.querySelector('#talents-root').innerHTML = '<p class="error-state">人材情報を取得できませんでした。</p>';
+        }
+      }
+      document.querySelector('#talent-registration-period')?.addEventListener('change', (event) => {
+        loadTalents(event.target.value, appliedQuery, true);
+      });
+      document.querySelector('#talent-search-form')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        loadTalents(selectedPeriod, document.querySelector('#talent-search-input').value, true);
+      });
+      document.querySelector('#talent-search-clear')?.addEventListener('click', () => {
+        document.querySelector('#talent-search-input').value = '';
+        loadTalents(selectedPeriod, '', true);
+      });
+      document.querySelector('#talent-registration-period').value = selectedPeriod;
+      document.querySelector('#talent-search-input').value = appliedQuery;
+      loadTalents(selectedPeriod, appliedQuery).then(() => {
+        currentTalentPage = Math.min(currentTalentPage, Math.max(0, Math.ceil(allTalents.length / pageSize) - 1));
+        updateTalents();
+      });
     </script>
   `);
 }
 
-function renderTalentDetailPage(id: string): string {
+function renderTalentDetailPage(id: string, returnState: { period?: string | undefined; query?: string | undefined; page?: number | undefined } = {}): string {
+  const period = returnState.period === "2" || returnState.period === "3" || returnState.period === "all" ? returnState.period : "1";
+  const query = String(returnState.query ?? "").replace(/[ \u3000]+/gu, " ").trim();
+  const page = Number.isInteger(returnState.page) && (returnState.page ?? 1) > 0 ? returnState.page ?? 1 : 1;
+  const returnQuery = new URLSearchParams({ period, ...(query ? { q: query } : {}), page: String(page) }).toString();
   return pageShell("人材詳細", `
     <main class="page-shell">
       <section class="panel" aria-labelledby="talent-heading">
-        <a href="/talents">← 人材一覧へ戻る</a>
+        <a href="/talents?${escapeHtml(returnQuery)}">← 人材一覧へ戻る</a>
         <h1 id="talent-heading" class="page-title">人材詳細</h1>
         <div id="talent-root" aria-live="polite"><p>読み込み中です。</p></div>
       </section>
@@ -1180,8 +1408,12 @@ async function handleProjectsApi(url: URL, response: ServerResponse): Promise<vo
   }
 
   try {
-    const projects = (await getPrismaClient().project.findMany({ orderBy: { createdAt: "asc" } }))
-      .map((project) => projectSummary({ id: project.id, ...projectSchema.parse(project) }));
+    const query = url.searchParams.get("q") ?? "";
+    const records = await getPrismaClient().project.findMany({ orderBy: { createdAt: "asc" } });
+    const projects = records
+      .map((record) => ({ id: record.id, ...projectSchema.parse(record) }))
+      .filter((project) => matchesProjectSearch(project, query))
+      .map((project) => projectSummary(project));
     sendJson(response, 200, { projects });
   } catch {
     sendJson(response, 503, {
@@ -1218,10 +1450,17 @@ async function handleProjectByIdApi(id: string, url: URL, response: ServerRespon
   sendJson(response, 200, { project });
 }
 
-async function handleTalentsApi(response: ServerResponse): Promise<void> {
+async function handleTalentsApi(url: URL, response: ServerResponse): Promise<void> {
   try {
-    const records = await getPrismaClient().talent.findMany({ orderBy: { id: "asc" } });
-    sendJson(response, 200, { talents: records.map((record) => talentResponse(record)) });
+    const period = parseTalentRegistrationPeriod(url.searchParams.get("period"));
+    const query = url.searchParams.get("q") ?? "";
+    const createdAtSince = getTalentRegistrationSince(new Date(), period);
+    const records = [...mockTalentRecords]
+      .filter((record) => createdAtSince === undefined || record.createdAt >= createdAtSince)
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || left.id.localeCompare(right.id));
+    const talents = records.map((record) => talentResponse(record))
+      .filter((talent) => matchesTalentSearch(talent, query));
+    sendJson(response, 200, { talents });
   } catch {
     sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
   }
@@ -1229,7 +1468,7 @@ async function handleTalentsApi(response: ServerResponse): Promise<void> {
 
 async function handleTalentByIdApi(id: string, response: ServerResponse): Promise<void> {
   try {
-    const record = await getPrismaClient().talent.findUnique({ where: { id } });
+    const record = mockTalentRecords.find((talent) => talent.id === id);
     if (!record) {
       sendJson(response, 404, { error: { code: "TALENT_NOT_FOUND", message: "Talent was not found." } });
       return;
@@ -1279,7 +1518,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   }
 
   if (url.pathname === "/api/talents") {
-    await handleTalentsApi(response);
+    await handleTalentsApi(url, response);
     return;
   }
 
@@ -1308,18 +1547,29 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   }
 
   if (url.pathname === "/projects") {
-    sendHtml(response, 200, renderProjectsPage());
+    sendHtml(response, 200, renderProjectsPage({
+      query: url.searchParams.get("q") ?? undefined,
+      page: Number(url.searchParams.get("page") ?? "1")
+    }));
     return;
   }
 
   if (url.pathname === "/talents") {
-    sendHtml(response, 200, renderTalentsPage());
+    sendHtml(response, 200, renderTalentsPage({
+      period: url.searchParams.get("period") ?? undefined,
+      query: url.searchParams.get("q") ?? undefined,
+      page: Number(url.searchParams.get("page") ?? "1")
+    }));
     return;
   }
 
   const talentRoute = /^\/talents\/([^/]+)$/.exec(url.pathname);
   if (talentRoute?.[1]) {
-    sendHtml(response, 200, renderTalentDetailPage(decodeURIComponent(talentRoute[1])));
+    sendHtml(response, 200, renderTalentDetailPage(decodeURIComponent(talentRoute[1]), {
+      period: url.searchParams.get("period") ?? undefined,
+      query: url.searchParams.get("q") ?? undefined,
+      page: Number(url.searchParams.get("page") ?? "1")
+    }));
     return;
   }
 
@@ -1331,7 +1581,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       return;
     }
     const id = decodeURIComponent(encodedId);
-    sendHtml(response, 200, renderProjectMatchesClientPage(id));
+    sendHtml(response, 200, renderProjectMatchesClientPage(id, {
+      query: url.searchParams.get("q") ?? undefined,
+      page: Number(url.searchParams.get("page") ?? "1")
+    }));
     return;
   }
 
