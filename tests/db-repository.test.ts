@@ -4,8 +4,8 @@ import { findRetryCandidates, isEligibleForNextBatchRetry } from "../src/db/mail
 describe("DB retry candidate search", () => {
   it("一時的失敗でMailMessage紐付きを候補として取得する", async () => {
     const fakePrisma = { aiProcessing: { findMany: async (args: unknown) => {
-      expect(args).toEqual({ where: { status: "failed", errorType: "temporary", mailMessageId: { not: null } }, select: { id: true, mailMessageId: true, graphMessageId: true, status: true, errorType: true, retryCount: true, mailMessage: { select: { mailboxId: true } } } });
-      return [{ id: "p1", mailMessageId: "m1", graphMessageId: "g1", status: "failed", errorType: "temporary", retryCount: 1, mailMessage: { mailboxId: "a@example.com" } }];
+      expect(args).toEqual({ where: { status: "failed", errorType: "temporary", mailMessageId: { not: null } }, select: { id: true, mailMessageId: true, graphMessageId: true, status: true, errorType: true, retryCount: true, mailMessage: { select: { mailboxId: true, subject: true } } } });
+      return [{ id: "p1", mailMessageId: "m1", graphMessageId: "g1", status: "failed", errorType: "temporary", retryCount: 1, mailMessage: { mailboxId: "a@example.com", subject: "subject" } }];
     } } };
     const result = await findRetryCandidates(fakePrisma as never);
     expect(result).toHaveLength(1);

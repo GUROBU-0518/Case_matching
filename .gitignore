@@ -9,3 +9,9 @@ coverage/
 local-data/emails/
 
 local-data/preprocessed/
+
+local-data/ai-single-command.ps1
+local-data/backups/
+local-data/logs/
+local-data/test-mail-ids.json
+local-data/run-auto-batch-test.ps1

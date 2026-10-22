@@ -17,4 +17,21 @@ describe("Graph Delta to T04 batch adapter", () => {
     const batch = await runGraphMailBatch(client as never, "box-a@example.com", 3, { retry: { retryDelaysMs: [0, 0] } });
     expect(batch.items.map((item) => item.mailboxId)).toEqual(["box-a@example.com", "box-a@example.com"]); expect(client.fetchDelta).toHaveBeenCalledWith("box-a@example.com", 3);
   });
+  it("classifierを注入するとメールごとに1回だけAI処理を行う", async () => {
+    const source = [email("ai-one"), email("ai-two")];
+    const client = { fetchDelta: vi.fn(async () => result(source.map((item) => ({ kind: "new" as const, message: { kind: "message" as const, email: item, contentType: "text" as const } })), source.map((item) => ({ kind: "message" as const, email: item, contentType: "text" as const })) )) };
+    const classifyAndExtract = vi.fn(async () => ({ classification: "other" as const, projects: [], talents: [] }));
+    const batch = await runGraphMailBatch(client as never, "box@example.com", 3, { classifier: { classifyAndExtract } as never, retry: { retryDelaysMs: [0, 0] } });
+    expect(batch.successCount).toBe(2);
+    expect(classifyAndExtract).toHaveBeenCalledTimes(2);
+    expect(classifyAndExtract).toHaveBeenCalledWith(expect.objectContaining({ subject: "ai-one", processedBody: expect.any(String) }));
+  });
+  it("AI一時エラーはT04の即時リトライ上限まで再試行する", async () => {
+    const fresh = email("ai-temporary");
+    const client = { fetchDelta: vi.fn(async () => result([], [{ kind: "message" as const, email: fresh, contentType: "text" as const }])) };
+    const classifyAndExtract = vi.fn(async () => { throw Object.assign(new Error("temporary"), { category: "temporary", retryable: true }); });
+    const batch = await runGraphMailBatch(client as never, "box@example.com", 3, { classifier: { classifyAndExtract } as never, retry: { retryDelaysMs: [0, 0] } });
+    expect(classifyAndExtract).toHaveBeenCalledTimes(3);
+    expect(batch.items[0]).toMatchObject({ status: "failed", errorCategory: "temporary", attempts: 3, retryCount: 2 });
+  });
 });

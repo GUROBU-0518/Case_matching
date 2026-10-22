@@ -16,8 +16,10 @@ model Project {
   summary                String?
   // 情報なしはNULLではなく空配列で扱う
   requiredSkills         String[]     @map("required_skills")
+  preferredSkills        String[]     @default([]) @map("preferred_skills")
   rate                   String?
   location               String?
+  nearestStation         String?      @map("nearest_station")
   workStyle              String?      @map("work_style")
   startDate              String?      @map("start_date")
   headcount              Int?
@@ -34,24 +36,29 @@ model Project {
 
 model Talent {
   // ID生成方式はSTEP3終了後に正式決定
-  id               String       @id
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  nameOrInitial    String?      @map("name_or_initial") @db.VarChar(100)
+  id                String       @id
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  nameOrInitial     String?      @map("name_or_initial") @db.VarChar(100)
   // 情報なしはNULLではなく空配列で扱う
-  technicalSkills  String[]     @map("technical_skills")
-  desiredRate      String?      @map("desired_rate")
-  nearestStation   String?      @map("nearest_station")
-  desiredWorkStyle String?      @map("desired_work_style")
-  availableFrom    String?      @map("available_from")
+  technicalSkills   String[]     @map("technical_skills")
+  desiredRate       String?      @map("desired_rate")
+  nearestStation    String?      @map("nearest_station")
+  desiredWorkStyle  String?      @map("desired_work_style")
+  availableFrom     String?      @map("available_from")
+  availablePeriod   String?      @map("available_period")
+  age               String?
+  yearsOfExperience String?      @map("years_of_experience")
   // 情報なしはNULLではなく空配列で扱う
-  availableProcess String[]     @map("available_process")
+  availableProcess  String[]     @map("available_process")
   // 所属はアプリケーション側でBP固定
-  affiliation      String       @default("BP")
-  sourceText       String?      @map("source_text")
+  affiliation       String       @default("BP")
+  affiliationType   String       @default("unknown") @map("affiliation_type") @db.VarChar(20)
+  sourceText        String?      @map("source_text")
+  notes             String?
   // 1メールから複数Talentが生成される可能性がある。メール以外から登録される可能性があるためNULL許可。
-  mailMessageId    String?      @map("mail_message_id")
-  mailMessage      MailMessage? @relation(fields: [mailMessageId], references: [id])
+  mailMessageId     String?      @map("mail_message_id")
+  mailMessage       MailMessage? @relation(fields: [mailMessageId], references: [id])
   // mailMessageIdの明示IndexはRelationによるIndexで十分かをSTEP5以降で確認する。
 
   @@map("talents")
@@ -74,6 +81,7 @@ model MailMessage {
   // Graphから取得した日時
   fetchedAt      DateTime      @map("fetched_at") @db.Timestamptz(3)
   sourceInfo     String?       @map("source_info")
+  processedBody  String?       @map("processed_body")
   // onDeleteはSTEP5以降でCascade/Restrict/SetNull/NoActionを検討する。
   projects       Project[]
   talents        Talent[]
@@ -102,6 +110,8 @@ model AiProcessing {
   retryCount          Int          @default(0) @map("retry_count")
   lastRetriedAt       DateTime?    @map("last_retried_at") @db.Timestamptz(3)
   zodValidationStatus String?      @map("zod_validation_status")
+  aiStatus            String?      @map("ai_status") @db.VarChar(30)
+  classification      String?      @db.VarChar(10)
   // MVPでは1メール1処理。再処理はretryCount更新方式。
   mailMessageId       String?      @unique @map("mail_message_id")
   mailMessage         MailMessage? @relation(fields: [mailMessageId], references: [id])

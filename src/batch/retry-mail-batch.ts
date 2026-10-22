@@ -1,8 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
-import { findRetryCandidates, isEligibleForNextBatchRetry, persistMailBatch, recordRetryFailure, type RetryCandidate } from "../db/mail-repository.ts";
+import { findRetryCandidates, isEligibleForNextBatchRetry, persistMailBatch, persistAiExtractionForEmail, recordAiProcessingFailure, recordRetryFailure, type RetryCandidate } from "../db/mail-repository.ts";
 import type { GraphMailClient, GraphClientError } from "../mail/graph-client.ts";
-import { runMailBatch, type MailBatchResult } from "./mail-batch.ts";
+import { runMailBatch, MailProcessingError, type MailBatchResult, type MailPreprocessor } from "./mail-batch.ts";
 import type { CommonEmail } from "../mail/types.ts";
+import type { OpenAiClassifier } from "../ai/openai-client.ts";
+import type { AiUsageBudget } from "../ai/usage-budget.ts";
 
 export interface RetryMailItemResult {
   candidate: RetryCandidate;
@@ -34,9 +36,9 @@ function safeErrorMessage(error: unknown): string {
 export async function runRetryMailBatch(
   prisma: PrismaClient,
   graphClient: Pick<GraphMailClient, "fetchMessage">,
-  options: { concurrency?: number; mailboxId?: string } = {},
+  options: { concurrency?: number; mailboxId?: string; classifier?: OpenAiClassifier; subjectPrefix?: string; aiBudget?: AiUsageBudget } = {},
 ): Promise<RetryMailBatchResult> {
-  const candidates = (await findRetryCandidates(prisma, options.mailboxId)).filter(isEligibleForNextBatchRetry);
+  const candidates = (await findRetryCandidates(prisma, options.mailboxId)).filter(isEligibleForNextBatchRetry).filter((candidate) => !options.subjectPrefix || candidate.subject?.startsWith(options.subjectPrefix));
   const items: RetryMailItemResult[] = [];
   for (const candidate of candidates) {
     if (!candidate.mailboxId) {
@@ -57,11 +59,29 @@ export async function runRetryMailBatch(
       items.push({ candidate, status: "failed", retryCount: errorType === "temporary" ? candidate.retryCount + 1 : candidate.retryCount, errorType, error: message });
       continue;
     }
+    const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
+    const processor = options.classifier ? async (current: CommonEmail, preprocess: MailPreprocessor) => {
+      const processed = await preprocess(current.body);
+      try { if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false }); const response = await options.classifier!.classifyAndExtract({ subject: current.subject, processedBody: processed.processedBody }); aiResults.set(current.messageId, response); return processed; }
+      catch (cause) {
+        const ai = cause as { category?: string; status?: number; retryable?: boolean };
+        const category = ai.category === "rate_limit" || ai.category === "timeout" || ai.category === "temporary" ? "temporary" : ai.category === "authentication" || ai.category === "validation" ? "permanent" : "unknown";
+        const code = typeof ai.status === "number" ? `HTTP_${ai.status}` : ai.category;
+        throw new MailProcessingError("AI処理に失敗しました", { category, ...(code ? { code } : {}), retryable: ai.retryable === true && category === "temporary" });
+      }
+    } : undefined;
     try {
-      const batch: MailBatchResult = await runMailBatch(async () => [email], undefined, options.concurrency ?? 1);
-      const persistence = await persistMailBatch(prisma, [email], batch, { isBatchRetry: true });
+      const batch: MailBatchResult = await runMailBatch(async () => [email], undefined, options.concurrency ?? 1, {}, processor);
+      const persistence = await persistMailBatch(prisma, [email], batch, { isBatchRetry: true, ...(options.classifier ? { deferProcessingStatus: true } : {}) });
       const item = batch.items[0];
-      const dbFailed = persistence.dbSaveFailureCount > 0 || persistence.persistedProcessingCount !== 1;
+      let dbFailed = persistence.dbSaveFailureCount > 0 || persistence.persistedProcessingCount !== 1;
+      if (!dbFailed && item?.success && options.classifier) {
+        const response = aiResults.get(email.messageId);
+        if (response) {
+          try { await persistAiExtractionForEmail(prisma, email.mailboxId, email.messageId, response, item.processedBody ?? ""); }
+          catch { dbFailed = true; await recordAiProcessingFailure(prisma, email.messageId, "db", "AI抽出結果の保存に失敗しました"); }
+        }
+      }
       const failed = !item?.success || dbFailed;
       const retryItem: RetryMailItemResult = { candidate, status: failed ? "failed" : "succeeded", retryCount: candidate.retryCount + 1 };
       if (item?.errorCategory !== undefined) retryItem.errorType = item.errorCategory;

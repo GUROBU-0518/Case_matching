@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { preprocessMailBody } from "../src/mail/preprocess.ts";
 
 describe("preprocessMailBody", () => {
+  it("冒頭と末尾の独立した定型挨拶を除去する", () => {
+    const result = preprocessMailBody("お世話になっております。\n案件名：在庫管理\n必須スキル：TypeScript\nご検討のほどよろしくお願いいたします。");
+    expect(result.processedBody).toBe("案件名：在庫管理\n必須スキル：TypeScript");
+  });
+
+  it("挨拶に似た重要情報を含む行は保持する", () => {
+    const result = preprocessMailBody("11月から稼働可能な人材をご紹介いたします。\n氏名：架空A");
+    expect(result.processedBody).toContain("11月から稼働可能");
+  });
+
   it("テキストの改行と行末空白を正規化する", () => {
     const result = preprocessMailBody(" A  \r\n\r\n\r\nB　C  ");
     expect(result.processedBody).toBe("A\n\nB　C");

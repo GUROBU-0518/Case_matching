@@ -44,7 +44,7 @@ export class GraphMailClient {
     this.maxPages = options.maxPages ?? 100;
   }
 
-  async fetchMailbox(mailboxId: string, top = 3): Promise<GraphFetchResult> {
+  async fetchMailbox(mailboxId: string, top = 3, receivedSince?: Date): Promise<GraphFetchResult> {
     if (!this.config.mailboxes.includes(mailboxId)) throw new GraphClientError("許可されたメールボックスではありません", "validation");
     if (!Number.isInteger(top) || top < 1) throw new GraphClientError("取得件数は1以上の整数で指定してください", "validation");
     if (!Number.isInteger(this.maxPages) || this.maxPages < 1) throw new GraphClientError("最大ページ数は1以上の整数で指定してください", "validation");
@@ -53,6 +53,7 @@ export class GraphMailClient {
     url.searchParams.set("$top", String(top));
     url.searchParams.set("$select", "id,subject,from,receivedDateTime,body,lastModifiedDateTime");
     url.searchParams.set("$orderby", "receivedDateTime desc");
+    if (receivedSince) url.searchParams.set("$filter", `receivedDateTime ge ${receivedSince.toISOString()}`);
     const messages: GraphMessageResult[] = [];
     const visited = new Set<string>();
     let pageUrl: string | undefined = url.toString();

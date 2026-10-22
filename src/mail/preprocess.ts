@@ -57,12 +57,23 @@ function removeSignature(value: string): { text: string; removed: boolean } {
   return hasContact ? { text: lines.slice(0, separator).join("\n").trimEnd(), removed: true } : { text: value, removed: false };
 }
 
+const openingGreetings = new Set(["お世話になっております。", "いつもお世話になっております。", "お疲れ様です。", "平素よりお世話になっております。"]);
+const closingGreetings = new Set(["よろしくお願いいたします。", "何卒よろしくお願いいたします。", "ご検討のほどよろしくお願いいたします。", "引き続きよろしくお願いいたします。"]);
+
+function removeGreetingLines(value: string): string {
+  const lines = value.split("\n");
+  while (lines.length > 0 && openingGreetings.has(lines[0]!.trim())) lines.shift();
+  while (lines.length > 0 && closingGreetings.has(lines[lines.length - 1]!.trim())) lines.pop();
+  return lines.join("\n");
+}
+
 export function preprocessMailBody(body: string, contentType: MailContentType = "text"): PreprocessedMailBody {
   const originalBody = body;
   const converted = contentType === "html" ? htmlToText(body) : body;
   const normalized = normalizeText(converted);
   const quoted = removeQuotedReply(normalized);
   const signature = removeSignature(quoted.text);
-  return { originalBody, processedBody: normalizeText(signature.text), signatureRemoved: signature.removed, quotedReplyRemoved: quoted.removed };
+  const withoutGreetings = removeGreetingLines(signature.text);
+  return { originalBody, processedBody: normalizeText(withoutGreetings), signatureRemoved: signature.removed, quotedReplyRemoved: quoted.removed };
 }
 

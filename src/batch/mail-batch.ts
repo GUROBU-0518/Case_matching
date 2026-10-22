@@ -64,6 +64,7 @@ export interface MailBatchResult {
 
 export type MailSource = () => Promise<CommonEmail[]>;
 export type MailPreprocessor = (body: string) => PreprocessedMailBody | Promise<PreprocessedMailBody>;
+export type MailProcessor = (email: CommonEmail, preprocess: MailPreprocessor) => Promise<PreprocessedMailBody>;
 export interface RetryOptions {
   maxAttempts?: number;
   retryDelaysMs?: number[];
@@ -72,7 +73,7 @@ export interface RetryOptions {
 
 const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-export async function processOneMail(email: CommonEmail, preprocess: MailPreprocessor = preprocessMailBody, retry: RetryOptions = {}): Promise<MailItemResult> {
+export async function processOneMail(email: CommonEmail, preprocess: MailPreprocessor = preprocessMailBody, retry: RetryOptions = {}, processor?: MailProcessor): Promise<MailItemResult> {
   const maxAttempts = retry.maxAttempts ?? 3;
   const delays = retry.retryDelaysMs ?? [1000, 2000];
   const sleep = retry.sleep ?? defaultSleep;
@@ -81,7 +82,7 @@ export async function processOneMail(email: CommonEmail, preprocess: MailPreproc
   while (attempts < maxAttempts) {
     attempts += 1;
     try {
-      const result = await preprocess(email.body);
+      const result = await (processor ? processor(email, preprocess) : preprocess(email.body));
       return {
         mailboxId: email.mailboxId, messageId: email.messageId, success: true, status: "succeeded",
         attempts, retryCount: attempts - 1, originalLength: result.originalBody.length,
@@ -116,7 +117,7 @@ export function createBatchResult(startedAt: Date, endedAt: Date, items: MailIte
   };
 }
 
-export async function runMailBatch(source: MailSource, preprocess: MailPreprocessor = preprocessMailBody, concurrency = 3, retry: RetryOptions = {}): Promise<MailBatchResult> {
+export async function runMailBatch(source: MailSource, preprocess: MailPreprocessor = preprocessMailBody, concurrency = 3, retry: RetryOptions = {}, processor?: MailProcessor): Promise<MailBatchResult> {
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("concurrencyは1以上の整数で指定してください");
   if (!Number.isInteger(retry.maxAttempts ?? 3) || (retry.maxAttempts ?? 3) < 1) throw new Error("maxAttemptsは1以上の整数で指定してください");
   const startedAt = new Date();
@@ -128,7 +129,7 @@ export async function runMailBatch(source: MailSource, preprocess: MailPreproces
       const index = nextIndex++;
       const email = emails[index];
       if (!email) return;
-      items[index] = await processOneMail(email, preprocess, retry);
+      items[index] = await processOneMail(email, preprocess, retry, processor);
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, emails.length) }, () => worker()));
