@@ -5,7 +5,6 @@ import { projectSchema, talentSchema } from "../domain/schemas.ts";
 import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../domain/talent-filter.ts";
 import { matchesTalentSearch } from "../domain/talent-search.ts";
 import { matchesProjectSearch } from "../domain/project-search.ts";
-import { mockTalents as mockTalentRecords } from "../mock/talents.ts";
 
 const defaultPort = 3000;
 
@@ -22,49 +21,7 @@ interface ProjectListItem {
 type ApiProject = Project & { readonly id: string };
 type ApiTalent = Talent & { readonly id: string };
 
-type MockTalent = Pick<Talent, "nameOrInitial" | "technicalSkills" | "desiredRate" | "nearestStation" | "desiredWorkStyle" | "affiliation"> & {
-  readonly id: string;
-};
-
 const mockTalentPageSize = 10;
-
-const mockTalentSeeds: readonly Omit<MockTalent, "id">[] = [
-  {
-    nameOrInitial: "山田 A.",
-    technicalSkills: ["TypeScript", "Node.js", "SQL"],
-    desiredRate: "月額70万円",
-    nearestStation: "新宿駅",
-    desiredWorkStyle: "リモート併用",
-    affiliation: "BP"
-  },
-  {
-    nameOrInitial: "佐藤 B.",
-    technicalSkills: ["Java", "Spring Boot", "PostgreSQL"],
-    desiredRate: "月額68万円",
-    nearestStation: "横浜駅",
-    desiredWorkStyle: "フルリモート",
-    affiliation: "BP"
-  },
-  {
-    nameOrInitial: "鈴木 C.",
-    technicalSkills: ["Python", "Django", "AWS"],
-    desiredRate: "月額65万円",
-    nearestStation: "大宮駅",
-    desiredWorkStyle: "出社・リモート併用",
-    affiliation: "BP"
-  }
-];
-
-const mockTalents: readonly MockTalent[] = Array.from({ length: 41 }, (_, index) => {
-  const seed = mockTalentSeeds[index % mockTalentSeeds.length]!;
-  return {
-    ...seed,
-    id: `talent-${String(index + 1).padStart(3, "0")}`,
-    nameOrInitial: index < mockTalentSeeds.length
-      ? seed.nameOrInitial
-      : `架空人材 ${String(index + 1).padStart(2, "0")}`
-  };
-});
 
 function getPort(argv: readonly string[]): number {
   const portIndex = argv.indexOf("--port");
@@ -96,21 +53,6 @@ function decodeTalentCursor(cursor: string, projectId: string): number | null {
   } catch {
     return null;
   }
-}
-
-function mockTalentResponse(talent: MockTalent): ApiTalent {
-  return {
-    id: talent.id,
-    nameOrInitial: talent.nameOrInitial,
-    technicalSkills: talent.technicalSkills,
-    desiredRate: talent.desiredRate,
-    nearestStation: talent.nearestStation,
-    desiredWorkStyle: talent.desiredWorkStyle,
-    availableFrom: null,
-    availableProcess: [],
-    affiliation: talent.affiliation,
-    sourceText: null
-  };
 }
 
 function pageShell(title: string, body: string): string {
@@ -861,6 +803,8 @@ function renderProjectsPage(initialState: { query?: string | undefined; page?: n
           .replaceAll("'", "&#39;");
       }
 
+      const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+
       function renderState(title, message, role = "") {
         projectsRoot.className = "project-grid";
         projectsRoot.innerHTML =
@@ -1045,6 +989,10 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           .replaceAll("'", "&#39;");
       }
 
+      const display = (item) => item === null || item === undefined || item === ""
+        ? "未設定"
+        : escapeHtml(item);
+
       function renderState(title, message, role = "") {
         matchingRoot.innerHTML = '<div class="state-box"' + (role ? ' role="' + role + '"' : "") + ">" +
           "<div><strong>" + escapeHtml(title) + "</strong><span>" + escapeHtml(message) + "</span></div></div>";
@@ -1068,15 +1016,15 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           '<p class="talent-count" aria-live="polite">' + talents.length + ' / ' + totalTalentCount + '人表示</p>' +
           '<div class="talent-list">' + talents.map((talent) =>
           '<button type="button" class="talent-card" data-talent-id="' + escapeHtml(talent.id) + '" aria-pressed="' + (talent.id === selectedTalentId ? 'true' : 'false') + '">' +
-            '<div class="talent-card-main"><h3>' + escapeHtml(talent.nameOrInitial) + '</h3>' +
+            '<div class="talent-card-main"><h3>' + display(talent.nameOrInitial) + '</h3>' +
               '<div class="talent-skills" aria-label="技術スキル">' +
-                (talent.technicalSkills.length > 0
-                  ? talent.technicalSkills.map((skill) => escapeHtml(skill)).join(' / ')
+                ((talent.technicalSkills || []).length > 0
+                  ? (talent.technicalSkills || []).map((skill) => escapeHtml(skill)).join(' / ')
                   : 'スキル未設定') +
               '</div></div>' +
             '<div class="talent-card-meta">' +
-              '<p>希望単価: ' + escapeHtml(talent.desiredRate) + '</p>' +
-              '<p>最寄り駅: ' + escapeHtml(talent.nearestStation) + '</p>' +
+              '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
+              '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
             '</div>' +
           '</button>'
         ).join('') + '</div>' + paginationMarkup;
@@ -1088,12 +1036,12 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
         }
 
         return '<div class="talent-detail" data-selected-talent-id="' + escapeHtml(talent.id) + '">' +
-          '<div class="talent-detail-item"><strong>氏名・イニシャル</strong><div>' + escapeHtml(talent.nameOrInitial) + '</div></div>' +
-          '<div class="talent-detail-item"><strong>技術スキル</strong><div>' + escapeHtml(talent.technicalSkills.join('、')) + '</div></div>' +
-          '<div class="talent-detail-item"><strong>希望単価</strong><div>' + escapeHtml(talent.desiredRate) + '</div></div>' +
-          '<div class="talent-detail-item"><strong>最寄り駅</strong><div>' + escapeHtml(talent.nearestStation) + '</div></div>' +
-          '<div class="talent-detail-item"><strong>希望勤務形態</strong><div>' + escapeHtml(talent.desiredWorkStyle) + '</div></div>' +
-          '<div class="talent-detail-item"><strong>所属</strong><div>' + escapeHtml(talent.affiliation) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>氏名・イニシャル</strong><div>' + display(talent.nameOrInitial) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>技術スキル</strong><div>' + display((talent.technicalSkills || []).join('、')) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>希望単価</strong><div>' + display(talent.desiredRate) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>最寄り駅</strong><div>' + display(talent.nearestStation) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>希望勤務形態</strong><div>' + display(talent.desiredWorkStyle) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>所属</strong><div>' + display(talent.affiliation) + '</div></div>' +
           '<div class="talent-detail-item"><strong>人材メールの原文</strong><div class="source-text">' +
             (talent.sourceText === null || talent.sourceText === undefined
               ? '人材メールの原文は未登録です'
@@ -1197,7 +1145,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
           '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
-            '<section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>モックAPIから取得した画面確認用データを表示しています。</p><div id="talent-list-root">' + renderTalentList(pageTalents) + '</div></section>' +
+            '<section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>登録済みの人材情報を表示しています。</p><div id="talent-list-root">' + renderTalentList(pageTalents) + '</div></section>' +
             '<section class="matching-panel talent-detail-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
           "</div>";
 
@@ -1455,9 +1403,12 @@ async function handleTalentsApi(url: URL, response: ServerResponse): Promise<voi
     const period = parseTalentRegistrationPeriod(url.searchParams.get("period"));
     const query = url.searchParams.get("q") ?? "";
     const createdAtSince = getTalentRegistrationSince(new Date(), period);
-    const records = [...mockTalentRecords]
-      .filter((record) => createdAtSince === undefined || record.createdAt >= createdAtSince)
-      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || left.id.localeCompare(right.id));
+    const records = createdAtSince === undefined
+      ? await getPrismaClient().talent.findMany({ orderBy: [{ createdAt: "desc" }, { id: "asc" }] })
+      : await getPrismaClient().talent.findMany({
+        where: { createdAt: { gte: createdAtSince } },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }]
+      });
     const talents = records.map((record) => talentResponse(record))
       .filter((talent) => matchesTalentSearch(talent, query));
     sendJson(response, 200, { talents });
@@ -1468,7 +1419,7 @@ async function handleTalentsApi(url: URL, response: ServerResponse): Promise<voi
 
 async function handleTalentByIdApi(id: string, response: ServerResponse): Promise<void> {
   try {
-    const record = mockTalentRecords.find((talent) => talent.id === id);
+    const record = await getPrismaClient().talent.findUnique({ where: { id } });
     if (!record) {
       sendJson(response, 404, { error: { code: "TALENT_NOT_FOUND", message: "Talent was not found." } });
       return;
@@ -1479,7 +1430,7 @@ async function handleTalentByIdApi(id: string, response: ServerResponse): Promis
   }
 }
 
-function handleProjectMatchesApi(projectId: string, url: URL, response: ServerResponse): void {
+async function handleProjectMatchesApi(projectId: string, url: URL, response: ServerResponse): Promise<void> {
   const requestedLimit = Number(url.searchParams.get("limit") ?? mockTalentPageSize);
   if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > mockTalentPageSize) {
     sendJson(response, 400, { error: { code: "INVALID_LIMIT", message: "Limit must be between 1 and 10." } });
@@ -1493,13 +1444,24 @@ function handleProjectMatchesApi(projectId: string, url: URL, response: ServerRe
     return;
   }
 
-  const talents = mockTalents.slice(offset, offset + requestedLimit).map(mockTalentResponse);
+  let records: Array<{ id: string; createdAt: Date } & Record<string, unknown>>;
+  try {
+    records = await getPrismaClient().talent.findMany({
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }]
+    });
+  } catch {
+    sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
+    return;
+  }
+
+  const pageRecords = records.slice(offset, offset + requestedLimit);
+  const talents = pageRecords.map((record) => talentResponse(record));
   const nextOffset = offset + talents.length;
   sendJson(response, 200, {
     talents,
-    totalCount: mockTalents.length,
-    nextCursor: nextOffset < mockTalents.length ? encodeTalentCursor(projectId, nextOffset) : null,
-    hasMore: nextOffset < mockTalents.length
+    totalCount: records.length,
+    nextCursor: nextOffset < records.length ? encodeTalentCursor(projectId, nextOffset) : null,
+    hasMore: nextOffset < records.length
   });
 }
 
@@ -1524,7 +1486,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   const matchesApiRoute = /^\/api\/projects\/([^/]+)\/matches$/.exec(url.pathname);
   if (matchesApiRoute?.[1]) {
-    handleProjectMatchesApi(decodeURIComponent(matchesApiRoute[1]), url, response);
+    await handleProjectMatchesApi(decodeURIComponent(matchesApiRoute[1]), url, response);
     return;
   }
 
