@@ -101,6 +101,17 @@ function parseHeadcount(value: string | null): number | null {
 
 export interface PersistAiExtractionResult { skipped: boolean; projectCount: number; talentCount: number; }
 
+/**
+ * Keeps the persistence layer defensive even when an older caller bypasses
+ * the Zod validation performed by the AI client.
+ */
+export function filterExtractionByClassification(response: AiResponse): Pick<AiResponse, "projects" | "talents"> {
+  return {
+    projects: response.classification === "project" || response.classification === "mixed" ? response.projects : [],
+    talents: response.classification === "talent" || response.classification === "mixed" ? response.talents : [],
+  };
+}
+
 export async function recordAiProcessingFailure(prisma: PrismaClient, mailMessageId: string, errorType: string, errorMessage: string): Promise<void> {
   await prisma.aiProcessing.update({ where: { mailMessageId }, data: { status: "failed", aiStatus: errorType === "temporary" ? "failed_temporary" : "failed_permanent", errorType, errorMessage, zodValidationStatus: "failed", endedAt: new Date() } });
 }
@@ -109,8 +120,9 @@ export async function persistAiExtraction(prisma: PrismaClient, mailMessageId: s
   return prisma.$transaction(async (tx) => {
     const existing = await tx.aiProcessing.findUnique({ where: { mailMessageId } });
     if (existing?.aiStatus === "succeeded") return { skipped: true, projectCount: 0, talentCount: 0 };
-    const projects = response.projects.map((project) => ({ id: randomUUID(), projectName: project.projectName, summary: project.summary, rate: project.price, location: project.location, nearestStation: project.nearestStation, workStyle: project.workStyle, startDate: project.startDate, requiredSkills: project.requiredSkills ?? [], preferredSkills: project.preferredSkills ?? [], headcount: parseHeadcount(project.headcount), process: project.phase, commercialRestrictions: project.commercialFlowRestriction, sourceText, mailMessageId }));
-    const talents = response.talents.map((talent) => ({ id: randomUUID(), nameOrInitial: talent.name, desiredRate: talent.desiredPrice, nearestStation: talent.nearestStation, technicalSkills: talent.skills ?? [], availableFrom: talent.availableFrom, availablePeriod: talent.availablePeriod, age: talent.age, yearsOfExperience: talent.yearsOfExperience, desiredWorkStyle: talent.desiredWorkStyle, availableProcess: talent.availablePhases ?? [], affiliation: "BP", affiliationType: talent.affiliationType, notes: talent.notes, sourceText, mailMessageId }));
+    const persistable = filterExtractionByClassification(response);
+    const projects = persistable.projects.map((project) => ({ id: randomUUID(), projectName: project.projectName, summary: project.summary, rate: project.price, location: project.location, nearestStation: project.nearestStation, workStyle: project.workStyle, startDate: project.startDate, requiredSkills: project.requiredSkills ?? [], preferredSkills: project.preferredSkills ?? [], headcount: parseHeadcount(project.headcount), process: project.phase, commercialRestrictions: project.commercialFlowRestriction, sourceText, mailMessageId }));
+    const talents = persistable.talents.map((talent) => ({ id: randomUUID(), nameOrInitial: talent.name, desiredRate: talent.desiredPrice, nearestStation: talent.nearestStation, technicalSkills: talent.skills ?? [], availableFrom: talent.availableFrom, availablePeriod: talent.availablePeriod, age: talent.age, yearsOfExperience: talent.yearsOfExperience, desiredWorkStyle: talent.desiredWorkStyle, availableProcess: talent.availablePhases ?? [], affiliation: "BP", affiliationType: talent.affiliationType, notes: talent.notes, sourceText, mailMessageId }));
     if (projects.length > 0) await tx.project.createMany({ data: projects });
     if (talents.length > 0) await tx.talent.createMany({ data: talents });
     await tx.aiProcessing.update({ where: { mailMessageId }, data: { status: "succeeded", aiStatus: "succeeded", classification: response.classification, errorType: null, errorMessage: null, zodValidationStatus: "succeeded", endedAt: new Date() } });
