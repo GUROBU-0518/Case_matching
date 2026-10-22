@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
+    "allowImportingTsExtensions": true,
     "moduleResolution": "NodeNext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
