@@ -1235,6 +1235,7 @@ function renderTalentsPage(initialState: { period?: string | undefined; query?: 
     <script>
       const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      const displayName = (value) => typeof value !== "string" || value.trim() === "" ? "未設定" : escapeHtml(value);
       const pageSize = 10;
       let allTalents = [];
       let selectedPeriod = ${scriptValue(initialPeriod)};
@@ -1251,7 +1252,7 @@ function renderTalentsPage(initialState: { period?: string | undefined; query?: 
         return '<p class="talent-count">全' + allTalents.length + '名</p>' +
           '<div class="talent-grid">' + pageTalents.map((talent) =>
             '<article class="talent-card">' +
-              '<div><h2>' + display(talent.id) + '</h2>' +
+              '<div><h2>' + displayName(talent.nameOrInitial) + '</h2>' +
                 '<p title="' + display((talent.technicalSkills || []).join("、")) + '">技術スキル: ' + display((talent.technicalSkills || []).join("、")) + '</p></div>' +
               '<div class="talent-card-meta">' +
                 '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
@@ -1325,9 +1326,11 @@ function renderTalentDetailPage(id: string, returnState: { period?: string | und
     <script>
       const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      const displayName = (value) => typeof value !== "string" || value.trim() === "" ? "未設定" : escapeHtml(value);
       const id = ${JSON.stringify(id)};
       fetch('/api/talents/' + encodeURIComponent(id)).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error?.message || 'talent'); return data; })
         .then(({ talent }) => { document.querySelector('#talent-root').innerHTML = '<dl>' +
+          '<dt>名前</dt><dd>' + displayName(talent.nameOrInitial) + '</dd>' +
           '<dt>ID</dt><dd>' + display(talent.id) + '</dd>' +
           '<dt>技術スキル</dt><dd>' + display((talent.technicalSkills || []).join("、")) + '</dd>' +
           '<dt>経験工程・担当業務</dt><dd>' + display((talent.availableProcess || []).join("、")) + '</dd>' +
