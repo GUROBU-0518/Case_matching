@@ -1,13 +1,14 @@
 import type { StationDistanceMatch } from "../contracts/interfaces.ts";
 import type { Project, Talent } from "./schemas.ts";
 import { isNearStationMatch } from "./station-match.ts";
+import { stationDistanceConfig } from "./station-distance-config.ts";
 
 export const matchPolicy = {
   tagMatchMode: "OR",
   unsetProjectTag: "skip",
   unsetStation: "skip",
   unsetRate: "skip",
-  stationMaxDistanceKm: 10
+  stationMaxDistanceKm: stationDistanceConfig.searchMaxDistanceKm
 } as const;
 
 export type RateCondition =

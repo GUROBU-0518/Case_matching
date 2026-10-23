@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getPrismaClient } from "../db/client.ts";
 import type { Project, Talent } from "../domain/schemas.ts";
@@ -7,6 +8,10 @@ import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../do
 import { matchesTalentSearch } from "../domain/talent-search.ts";
 import { matchesProjectSearch } from "../domain/project-search.ts";
 import { matchesProjectConditions } from "../domain/project-match-filter.ts";
+import { stationDistanceConfig } from "../domain/station-distance-config.ts";
+
+const require = createRequire(import.meta.url);
+const { Prisma } = require("../../node_modules/.prisma/client/index.js") as typeof import("@prisma/client");
 
 const defaultPort = 3000;
 
@@ -1003,7 +1008,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
             ? "駅距離: 勤務地の駅を特定できません"
             : "駅距離: 最寄り駅を特定できません";
         }
-        return "駅距離: " + escapeHtml(match.straightDistanceKm) + "km（" + escapeHtml(match.distanceBand) + "）";
+        return "駅距離: " + escapeHtml(match.straightDistanceKm) + "km（" + escapeHtml(match.distanceBand) + "）<small>駅間直線距離による目安</small>";
       }
 
       function renderState(title, message, role = "") {
@@ -1226,29 +1231,13 @@ type StationDistanceRow = {
   method: StationDistanceMatch["method"];
 };
 
+type BatchStationDistanceRow = StationDistanceRow & { talent_id: string };
+
 function normalizeStationInput(value: string): string {
   return value.normalize("NFKC");
 }
 
-async function getStationDistanceMatch(
-  workplaceStation: string | null,
-  personStation: string | null
-): Promise<StationDistanceMatch | null> {
-  if (!workplaceStation?.trim() || !personStation?.trim()) return null;
-
-  const rows = await getPrismaClient().$transaction(async (transaction) => {
-    // The master SQL defines helper references without schema qualification.
-    await transaction.$executeRawUnsafe("SET LOCAL search_path TO station_match, public");
-    return transaction.$queryRaw<StationDistanceRow[]>`
-      SELECT status, workplace_group_code, person_group_code,
-        workplace_display_name, person_display_name, straight_distance_km,
-        distance_band, method
-      FROM station_match.station_straight_distance(${normalizeStationInput(workplaceStation)}, ${normalizeStationInput(personStation)})
-    `;
-  });
-  const row = rows[0];
-  if (!row) return null;
-
+function toStationDistanceMatch(row: StationDistanceRow): StationDistanceMatch {
   return {
     status: row.status,
     workplaceGroupCode: row.workplace_group_code,
@@ -1261,14 +1250,78 @@ async function getStationDistanceMatch(
   };
 }
 
+async function getStationDistanceMatches(
+  workplaceStation: string,
+  records: Array<{ id: string } & Record<string, unknown>>
+): Promise<Map<string, StationDistanceMatch>> {
+  if (!records.length) return new Map();
+
+  const stationInputs = records.map((record) => Prisma.sql`(
+    ${record.id},
+    ${typeof record.nearestStation === "string" ? normalizeStationInput(record.nearestStation) : null}
+  )`);
+  const queryBatch = async (useConfigurableFunction: boolean): Promise<BatchStationDistanceRow[]> => getPrismaClient().$transaction(async (transaction) => {
+    // The master SQL defines helper references without schema qualification.
+    await transaction.$executeRawUnsafe("SET LOCAL search_path TO station_match, public");
+    if (useConfigurableFunction) {
+      return transaction.$queryRaw<BatchStationDistanceRow[]>`
+        WITH station_inputs(talent_id, person_station_name) AS (
+          VALUES ${Prisma.join(stationInputs)}
+        )
+        SELECT station_inputs.talent_id, distance.status, distance.workplace_group_code,
+          distance.person_group_code,
+          distance.workplace_display_name, distance.person_display_name,
+          distance.straight_distance_km, distance.distance_band, distance.method
+        FROM station_inputs
+        CROSS JOIN LATERAL station_match.station_straight_distance(
+          ${normalizeStationInput(workplaceStation)},
+          station_inputs.person_station_name,
+          ${stationDistanceConfig.nearKm},
+          ${stationDistanceConfig.middleKm},
+          ${stationDistanceConfig.farKm}
+        ) AS distance
+      `;
+    }
+    return transaction.$queryRaw<BatchStationDistanceRow[]>`
+      WITH station_inputs(talent_id, person_station_name) AS (
+        VALUES ${Prisma.join(stationInputs)}
+      )
+      SELECT station_inputs.talent_id, distance.status, distance.workplace_group_code,
+        distance.person_group_code,
+        distance.workplace_display_name, distance.person_display_name,
+        distance.straight_distance_km, distance.distance_band, distance.method
+      FROM station_inputs
+      CROSS JOIN LATERAL station_match.station_straight_distance(
+        ${normalizeStationInput(workplaceStation)},
+        station_inputs.person_station_name
+      ) AS distance
+    `;
+  });
+  let rows: BatchStationDistanceRow[];
+  try {
+    rows = await queryBatch(true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/function\s+station_match\.station_straight_distance.*does not exist/iu.test(message)) throw error;
+    rows = await queryBatch(false);
+  }
+
+  return new Map(rows.map((row) => [row.talent_id, toStationDistanceMatch(row)]));
+}
+
 async function addStationDistanceMatches(
   projectLocation: string | null,
   records: Array<{ id: string } & Record<string, unknown>>
 ): Promise<ApiMatchTalent[]> {
-  return Promise.all(records.map(async (record) => ({
+  if (!projectLocation?.trim()) {
+    return records.map((record) => ({ ...talentResponse(record), stationMatch: null }));
+  }
+
+  const stationMatches = await getStationDistanceMatches(projectLocation, records);
+  return records.map((record) => ({
     ...talentResponse(record),
-    stationMatch: await getStationDistanceMatch(projectLocation, typeof record.nearestStation === "string" ? record.nearestStation : null)
-  })));
+    stationMatch: stationMatches.get(record.id) ?? null
+  }));
 }
 
 function renderTalentsPage(initialState: { period?: string | undefined; query?: string | undefined; page?: number | undefined } = {}): string {
