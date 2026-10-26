@@ -43,9 +43,11 @@ describe("project match filters", () => {
     expect(matchesRateCondition(undefined, null)).toBe(true);
   });
 
-  it("combines active conditions with AND and skips unset station or rate", () => {
+  it("keeps station and skill mismatches as candidates while enforcing rate", () => {
     expect(matchesProjectConditions({ requiredSkills: ["Java"], location: "大森", rate: "80万円以下" }, talent(), near)).toBe(true);
     expect(matchesProjectConditions({ requiredSkills: [], location: null, rate: null }, talent({ desiredRate: null }), null)).toBe(true);
-    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent(), near)).toBe(false);
+    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent(), near)).toBe(true);
+    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent({ desiredRate: "85万円" }), near)).toBe(false);
+    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent({ nearestStation: null }), null)).toBe(true);
   });
 });

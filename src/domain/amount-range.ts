@@ -30,7 +30,8 @@ function normalizeAmountText(value: string): string {
 }
 
 function removeSupportedSuffix(value: string): string {
-  return value.replace(/(?:程度|\(応相談\))$/u, "");
+  const supportedNote = /\((?:応相談|調整可能|相談可能(?:、\d+(?:~|〜|～|-)\d+時間)?)\)$/u;
+  return value.replace(supportedNote, "").replace(/程度$/u, "");
 }
 
 export function parseAmountRange(value: string | null | undefined): AmountRange {

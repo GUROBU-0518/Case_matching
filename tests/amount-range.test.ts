@@ -15,6 +15,17 @@ describe("parseAmountRange", () => {
     expect(parseAmountRange("91万円（応相談）")).toEqual({ minYen: 910000, maxYen: 910000 });
   });
 
+  it("parses approved notes after a single amount", () => {
+    expect(parseAmountRange("65万円（調整可能）")).toEqual({ minYen: 650000, maxYen: 650000 });
+    expect(parseAmountRange("85万円（相談可能、140〜180時間）")).toEqual({ minYen: 850000, maxYen: 850000 });
+    expect(parseAmountRange("53万円（相談可能、140〜180時間）")).toEqual({ minYen: 530000, maxYen: 530000 });
+  });
+
+  it("does not treat unrelated time ranges as money", () => {
+    expect(parseAmountRange("140〜180時間")).toEqual({ minYen: null, maxYen: null });
+    expect(parseAmountRange("85万円（勤務時間140〜180時間）")).toEqual({ minYen: null, maxYen: null });
+  });
+
   it("normalizes full-width digits, commas, and spaces", () => {
     expect(parseAmountRange("８０万円")).toEqual({ minYen: 800000, maxYen: 800000 });
     expect(parseAmountRange("800,000円")).toEqual({ minYen: 800000, maxYen: 800000 });

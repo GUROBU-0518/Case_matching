@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNearStationMatch } from "../src/domain/station-match.ts";
+import { isNearStationMatch, sortByStationDistance } from "../src/domain/station-match.ts";
 import type { StationDistanceMatch } from "../src/contracts/interfaces.ts";
 import { classifyStationDistance, createStationDistanceConfig, stationDistanceConfig } from "../src/domain/station-distance-config.ts";
 
@@ -51,5 +51,35 @@ describe("station distance configuration", () => {
 
   it("rejects invalid threshold ordering", () => {
     expect(() => createStationDistanceConfig({ ...stationDistanceConfig, middleKm: 10 })).toThrow();
+  });
+});
+
+describe("station distance ordering", () => {
+  it("sorts known distances ascending and keeps unknown stations last", () => {
+    const newest = new Date("2026-10-26T12:00:00Z");
+    const older = new Date("2026-10-25T12:00:00Z");
+    const unknown = { ...match(0), status: "UNKNOWN_PERSON_STATION" as const, straightDistanceKm: null, distanceBand: null };
+
+    const result = sortByStationDistance([
+      { id: "talent-005", createdAt: newest, stationMatch: match(34.987, "FAR"), value: "far" },
+      { id: "talent-002", createdAt: newest, stationMatch: unknown, value: "unknown-new" },
+      { id: "talent-003", createdAt: older, stationMatch: match(4.205), value: "near" },
+      { id: "talent-001", createdAt: newest, stationMatch: match(10.881, "MIDDLE"), value: "middle" },
+      { id: "talent-004", createdAt: older, stationMatch: { ...unknown, personDisplayName: "別駅" }, value: "unknown-old" }
+    ]);
+
+    expect(result).toEqual(["near", "middle", "far", "unknown-new", "unknown-old"]);
+  });
+
+  it("uses createdAt desc and id asc when distances are equal", () => {
+    const sameDistance = match(4.205);
+    const date = new Date("2026-10-26T12:00:00Z");
+
+    const result = sortByStationDistance([
+      { id: "talent-002", createdAt: date, stationMatch: sameDistance, value: "second" },
+      { id: "talent-001", createdAt: date, stationMatch: sameDistance, value: "first" }
+    ]);
+
+    expect(result).toEqual(["first", "second"]);
   });
 });

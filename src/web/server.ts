@@ -9,6 +9,7 @@ import { matchesTalentSearch } from "../domain/talent-search.ts";
 import { matchesProjectSearch } from "../domain/project-search.ts";
 import { matchesProjectConditions } from "../domain/project-match-filter.ts";
 import { stationDistanceConfig } from "../domain/station-distance-config.ts";
+import { sortByStationDistance } from "../domain/station-match.ts";
 
 const require = createRequire(import.meta.url);
 const { Prisma } = require("../../node_modules/.prisma/client/index.js") as typeof import("@prisma/client");
@@ -1486,7 +1487,7 @@ async function handleProjectsApi(url: URL, response: ServerResponse): Promise<vo
     const query = url.searchParams.get("q") ?? "";
     const records = await getPrismaClient().project.findMany({ orderBy: { createdAt: "asc" } });
     const projects = records
-      .map((record) => ({ id: record.id, ...projectSchema.parse(record) }))
+      .map((record) => ({ id: record.id, ...projectSchema.parse(record), rateMin: record.rateMin, rateMax: record.rateMax }))
       .filter((project) => matchesProjectSearch(project, query))
       .map((project) => projectSummary(project));
     sendJson(response, 200, { projects });
@@ -1536,8 +1537,15 @@ async function handleTalentsApi(url: URL, response: ServerResponse): Promise<voi
         where: { createdAt: { gte: createdAtSince } },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }]
       });
-    const talents = records.map((record) => talentResponse(record))
-      .filter((talent) => matchesTalentSearch(talent, query));
+    const searchableTalents = records.map((record) => ({
+      id: record.id,
+      ...talentSchema.parse(record),
+      desiredRateMin: record.desiredRateMin,
+      desiredRateMax: record.desiredRateMax
+    }));
+    const talents = searchableTalents
+      .filter((talent) => matchesTalentSearch(talent, query))
+      .map((talent) => talentResponse({ id: talent.id, ...talentSchema.parse(talent) }));
     sendJson(response, 200, { talents });
   } catch {
     sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
@@ -1595,7 +1603,20 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     const matchedTalents = project?.location?.trim()
       ? await addStationDistanceMatches(project.location, records)
       : records.map((record) => ({ ...talentResponse(record), stationMatch: null }));
-    const eligibleTalents = matchedTalents.filter((talent) => matchesProjectConditions(project!, talent, talent.stationMatch));
+    const recordMetadata = new Map(records.map((record) => [record.id, record]));
+    const eligibleTalents = sortByStationDistance(
+      matchedTalents
+        .filter((talent) => matchesProjectConditions(project!, talent, talent.stationMatch))
+        .map((talent) => {
+          const record = recordMetadata.get(talent.id);
+          return {
+            id: talent.id,
+            createdAt: record?.createdAt ?? new Date(0),
+            stationMatch: talent.stationMatch,
+            value: talent
+          };
+        })
+    );
     const pageTalents = eligibleTalents.slice(offset, offset + requestedLimit);
     talents = pageTalents;
     const nextOffset = offset + talents.length;

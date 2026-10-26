@@ -1,6 +1,5 @@
 import type { StationDistanceMatch } from "../contracts/interfaces.ts";
 import type { Project, Talent } from "./schemas.ts";
-import { isNearStationMatch } from "./station-match.ts";
 import { stationDistanceConfig } from "./station-distance-config.ts";
 
 export const matchPolicy = {
@@ -98,9 +97,7 @@ export function matchesProjectConditions(
   talent: Talent,
   stationMatch: StationDistanceMatch | null
 ): boolean {
-  const stationEnabled = Boolean(project.location?.trim());
-  const stationMatches = !stationEnabled || isNearStationMatch(stationMatch);
-  return hasMatchingProjectTag(project.requiredSkills, talent) &&
-    stationMatches &&
-    matchesRateCondition(parseRateCondition(project.rate), talent.desiredRate);
+  void project.location;
+  void stationMatch;
+  return matchesRateCondition(parseRateCondition(project.rate), talent.desiredRate);
 }
