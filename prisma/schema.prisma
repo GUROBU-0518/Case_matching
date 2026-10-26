@@ -20,6 +20,8 @@ model Project {
   rate                   String?
   unitPriceMin           Int?         @map("unit_price_min")
   unitPriceMax           Int?         @map("unit_price_max")
+  rateMin                BigInt?      @map("rate_min")
+  rateMax                BigInt?      @map("rate_max")
   location               String?
   nearestStation         String?      @map("nearest_station")
   workStyle              String?      @map("work_style")
@@ -47,6 +49,8 @@ model Talent {
   desiredRate       String?      @map("desired_rate")
   desiredPriceMin   Int?         @map("desired_price_min")
   desiredPriceMax   Int?         @map("desired_price_max")
+  desiredRateMin    BigInt?      @map("desired_rate_min")
+  desiredRateMax    BigInt?      @map("desired_rate_max")
   nearestStation    String?      @map("nearest_station")
   desiredWorkStyle  String?      @map("desired_work_style")
   availableFrom     String?      @map("available_from")

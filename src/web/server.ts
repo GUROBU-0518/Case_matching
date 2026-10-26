@@ -1,10 +1,19 @@
+import { createRequire } from "node:module";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getPrismaClient } from "../db/client.ts";
 import type { Project, Talent } from "../domain/schemas.ts";
+import type { StationDistanceMatch } from "../contracts/interfaces.ts";
 import { projectSchema, talentSchema } from "../domain/schemas.ts";
 import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../domain/talent-filter.ts";
 import { matchesTalentSearch } from "../domain/talent-search.ts";
 import { matchesProjectSearch, matchesProjectTalentPrice } from "../domain/project-search.ts";
+import { matchesProjectConditions } from "../domain/project-match-filter.ts";
+import { stationDistanceConfig } from "../domain/station-distance-config.ts";
+import { sortByStationDistance } from "../domain/station-match.ts";
+
+const require = createRequire(import.meta.url);
+const { Prisma } = require("../../node_modules/.prisma/client/index.js") as typeof import("@prisma/client");
+
 
 const defaultPort = 3000;
 
@@ -22,6 +31,7 @@ interface ProjectListItem {
 
 type ApiProject = Project & { readonly id: string };
 type ApiTalent = Talent & { readonly id: string };
+type ApiMatchTalent = ApiTalent & { readonly stationMatch: StationDistanceMatch | null };
 
 const mockTalentPageSize = 10;
 
@@ -995,6 +1005,16 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
         ? "未設定"
         : escapeHtml(item);
 
+      function stationMatchDisplay(match) {
+        if (!match) return "駅距離: 判定対象外";
+        if (match.status !== "OK") {
+          return match.status === "UNKNOWN_WORKPLACE_STATION"
+            ? "駅距離: 勤務地の駅を特定できません"
+            : "駅距離: 最寄り駅を特定できません";
+        }
+        return "駅距離: " + escapeHtml(match.straightDistanceKm) + "km（" + escapeHtml(match.distanceBand) + "）<small>駅間直線距離による目安</small>";
+      }
+
       function renderState(title, message, role = "") {
         matchingRoot.innerHTML = '<div class="state-box"' + (role ? ' role="' + role + '"' : "") + ">" +
           "<div><strong>" + escapeHtml(title) + "</strong><span>" + escapeHtml(message) + "</span></div></div>";
@@ -1004,7 +1024,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
         if (talents.length === 0) {
           return talentPageLoading
             ? '<div class="matching-placeholder">人材を読み込み中です。</div>'
-            : '<div class="matching-placeholder">表示できる人材がありません。</div>';
+            : '<div class="matching-placeholder">条件に一致する人材がいません。</div>';
         }
 
         const totalPages = Math.max(1, Math.ceil(totalTalentCount / pageSize));
@@ -1027,6 +1047,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
             '<div class="talent-card-meta">' +
               '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
               '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
+              '<p>' + stationMatchDisplay(talent.stationMatch) + '</p>' +
             '</div>' +
           '</button>'
         ).join('') + '</div>' + paginationMarkup;
@@ -1042,6 +1063,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           '<div class="talent-detail-item"><strong>技術スキル</strong><div>' + display((talent.technicalSkills || []).join('、')) + '</div></div>' +
           '<div class="talent-detail-item"><strong>希望単価</strong><div>' + display(talent.desiredRate) + '</div></div>' +
           '<div class="talent-detail-item"><strong>最寄り駅</strong><div>' + display(talent.nearestStation) + '</div></div>' +
+          '<div class="talent-detail-item"><strong>駅距離</strong><div>' + stationMatchDisplay(talent.stationMatch) + '</div></div>' +
           '<div class="talent-detail-item"><strong>希望勤務形態</strong><div>' + display(talent.desiredWorkStyle) + '</div></div>' +
           '<div class="talent-detail-item"><strong>所属</strong><div>' + display(talent.affiliation) + '</div></div>' +
           '<div class="talent-detail-item"><strong>人材メールの原文</strong><div class="source-text">' +
@@ -1223,6 +1245,110 @@ function talentResponse(record: { id: string } & Record<string, unknown>): ApiTa
   return { id: record.id, ...talent, desiredRate: formatTalentRate(talent) };
 }
 
+type StationDistanceRow = {
+  status: StationDistanceMatch["status"];
+  workplace_group_code: string | null;
+  person_group_code: string | null;
+  workplace_display_name: string | null;
+  person_display_name: string | null;
+  straight_distance_km: number | string | null;
+  distance_band: StationDistanceMatch["distanceBand"];
+  method: StationDistanceMatch["method"];
+};
+
+type BatchStationDistanceRow = StationDistanceRow & { talent_id: string };
+
+function normalizeStationInput(value: string): string {
+  return value.normalize("NFKC");
+}
+
+function toStationDistanceMatch(row: StationDistanceRow): StationDistanceMatch {
+  return {
+    status: row.status,
+    workplaceGroupCode: row.workplace_group_code,
+    personGroupCode: row.person_group_code,
+    workplaceDisplayName: row.workplace_display_name,
+    personDisplayName: row.person_display_name,
+    straightDistanceKm: row.straight_distance_km === null ? null : Number(row.straight_distance_km),
+    distanceBand: row.distance_band,
+    method: row.method
+  };
+}
+
+async function getStationDistanceMatches(
+  workplaceStation: string,
+  records: Array<{ id: string } & Record<string, unknown>>
+): Promise<Map<string, StationDistanceMatch>> {
+  if (!records.length) return new Map();
+
+  const stationInputs = records.map((record) => Prisma.sql`(
+    ${record.id},
+    ${typeof record.nearestStation === "string" ? normalizeStationInput(record.nearestStation) : null}
+  )`);
+  const queryBatch = async (useConfigurableFunction: boolean): Promise<BatchStationDistanceRow[]> => getPrismaClient().$transaction(async (transaction) => {
+    // The master SQL defines helper references without schema qualification.
+    await transaction.$executeRawUnsafe("SET LOCAL search_path TO station_match, public");
+    if (useConfigurableFunction) {
+      return transaction.$queryRaw<BatchStationDistanceRow[]>`
+        WITH station_inputs(talent_id, person_station_name) AS (
+          VALUES ${Prisma.join(stationInputs)}
+        )
+        SELECT station_inputs.talent_id, distance.status, distance.workplace_group_code,
+          distance.person_group_code,
+          distance.workplace_display_name, distance.person_display_name,
+          distance.straight_distance_km, distance.distance_band, distance.method
+        FROM station_inputs
+        CROSS JOIN LATERAL station_match.station_straight_distance(
+          ${normalizeStationInput(workplaceStation)},
+          station_inputs.person_station_name,
+          ${stationDistanceConfig.nearKm},
+          ${stationDistanceConfig.middleKm},
+          ${stationDistanceConfig.farKm}
+        ) AS distance
+      `;
+    }
+    return transaction.$queryRaw<BatchStationDistanceRow[]>`
+      WITH station_inputs(talent_id, person_station_name) AS (
+        VALUES ${Prisma.join(stationInputs)}
+      )
+      SELECT station_inputs.talent_id, distance.status, distance.workplace_group_code,
+        distance.person_group_code,
+        distance.workplace_display_name, distance.person_display_name,
+        distance.straight_distance_km, distance.distance_band, distance.method
+      FROM station_inputs
+      CROSS JOIN LATERAL station_match.station_straight_distance(
+        ${normalizeStationInput(workplaceStation)},
+        station_inputs.person_station_name
+      ) AS distance
+    `;
+  });
+  let rows: BatchStationDistanceRow[];
+  try {
+    rows = await queryBatch(true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/function\s+station_match\.station_straight_distance.*does not exist/iu.test(message)) throw error;
+    rows = await queryBatch(false);
+  }
+
+  return new Map(rows.map((row) => [row.talent_id, toStationDistanceMatch(row)]));
+}
+
+async function addStationDistanceMatches(
+  projectLocation: string | null,
+  records: Array<{ id: string } & Record<string, unknown>>
+): Promise<ApiMatchTalent[]> {
+  if (!projectLocation?.trim()) {
+    return records.map((record) => ({ ...talentResponse(record), stationMatch: null }));
+  }
+
+  const stationMatches = await getStationDistanceMatches(projectLocation, records);
+  return records.map((record) => ({
+    ...talentResponse(record),
+    stationMatch: stationMatches.get(record.id) ?? null
+  }));
+}
+
 function renderTalentsPage(initialState: { period?: string | undefined; query?: string | undefined; page?: number | undefined } = {}): string {
   const initialPeriod = initialState.period === "2" || initialState.period === "3" || initialState.period === "all" ? initialState.period : "1";
   const initialQuery = String(initialState.query ?? "").replace(/[ \u3000]+/gu, " ").trim();
@@ -1385,7 +1511,7 @@ async function handleProjectsApi(url: URL, response: ServerResponse): Promise<vo
     const query = url.searchParams.get("q") ?? "";
     const records = await getPrismaClient().project.findMany({ orderBy: { createdAt: "asc" } });
     const projects = records
-      .map((record) => ({ id: record.id, ...projectSchema.parse(record) }))
+      .map((record) => ({ id: record.id, ...projectSchema.parse(record), rateMin: record.rateMin, rateMax: record.rateMax }))
       .filter((project) => matchesProjectSearch(project, query))
       .map((project) => projectSummary(project));
     sendJson(response, 200, { projects });
@@ -1435,8 +1561,15 @@ async function handleTalentsApi(url: URL, response: ServerResponse): Promise<voi
         where: { createdAt: { gte: createdAtSince } },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }]
       });
-    const talents = records.map((record) => talentResponse(record))
-      .filter((talent) => matchesTalentSearch(talent, query));
+    const searchableTalents = records.map((record) => ({
+      id: record.id,
+      ...talentSchema.parse(record),
+      desiredRateMin: record.desiredRateMin,
+      desiredRateMax: record.desiredRateMax
+    }));
+    const talents = searchableTalents
+      .filter((talent) => matchesTalentSearch(talent, query))
+      .map((talent) => talentResponse({ id: talent.id, ...talentSchema.parse(talent) }));
     sendJson(response, 200, { talents });
   } catch {
     sendJson(response, 503, { error: { code: "TALENTS_UNAVAILABLE", message: "Talents are temporarily unavailable." } });
@@ -1470,8 +1603,15 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     return;
   }
 
+  let project: ApiProject | null = null;
   let records: Array<{ id: string; createdAt: Date } & Record<string, unknown>>;
   try {
+    const projectRecord = await getPrismaClient().project.findUnique({ where: { id: projectId } });
+    project = projectRecord ? { id: projectRecord.id, ...projectSchema.parse(projectRecord) } : null;
+    if (!project) {
+      sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+      return;
+    }
     records = await getPrismaClient().talent.findMany({
       orderBy: [{ createdAt: "desc" }, { id: "asc" }]
     });
@@ -1481,23 +1621,41 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
   }
 
   if (url.searchParams.get("priceFilter") === "1") {
-    const projectRecord = await getPrismaClient().project.findUnique({ where: { id: projectId } });
-    if (!projectRecord) {
-      sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
-      return;
-    }
-    const project = { id: projectRecord.id, ...projectSchema.parse(projectRecord) };
     records = records.filter((record) => matchesProjectTalentPrice(project, talentResponse(record)));
   }
-  const pageRecords = records.slice(offset, offset + requestedLimit);
-  const talents = pageRecords.map((record) => talentResponse(record));
-  const nextOffset = offset + talents.length;
-  sendJson(response, 200, {
-    talents,
-    totalCount: records.length,
-    nextCursor: nextOffset < records.length ? encodeTalentCursor(projectId, nextOffset) : null,
-    hasMore: nextOffset < records.length
-  });
+  let talents: ApiMatchTalent[];
+  try {
+    const matchedTalents = project?.location?.trim()
+      ? await addStationDistanceMatches(project.location, records)
+      : records.map((record) => ({ ...talentResponse(record), stationMatch: null }));
+    const recordMetadata = new Map(records.map((record) => [record.id, record]));
+    const eligibleTalents = sortByStationDistance(
+      matchedTalents
+        .filter((talent) => matchesProjectConditions(project!, talent, talent.stationMatch))
+        .map((talent) => {
+          const record = recordMetadata.get(talent.id);
+          return {
+            id: talent.id,
+            createdAt: record?.createdAt ?? new Date(0),
+            stationMatch: talent.stationMatch,
+            value: talent
+          };
+        })
+    );
+    const pageTalents = eligibleTalents.slice(offset, offset + requestedLimit);
+    talents = pageTalents;
+    const nextOffset = offset + talents.length;
+    sendJson(response, 200, {
+      talents,
+      totalCount: eligibleTalents.length,
+      nextCursor: nextOffset < eligibleTalents.length ? encodeTalentCursor(projectId, nextOffset) : null,
+      hasMore: nextOffset < eligibleTalents.length
+    });
+    return;
+  } catch {
+    sendJson(response, 503, { error: { code: "STATION_MATCH_UNAVAILABLE", message: "Station matching is temporarily unavailable." } });
+    return;
+  }
 }
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {

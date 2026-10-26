@@ -107,4 +107,3 @@ export function preprocessMailBody(body: string, contentType: MailContentType = 
   const withoutGreetings = removeGreetingLines(signature.text);
   return { originalBody, processedBody: normalizeText(removeBoilerplateFooter(withoutGreetings)), signatureRemoved: signature.removed, quotedReplyRemoved: quoted.removed };
 }
-

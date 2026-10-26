@@ -8630,4 +8630,3 @@ COMMIT;
 -- SELECT station_match.resolve_station_group('新宿');
 -- SELECT station_match.resolve_station_group('新宿駅');
 -- SELECT * FROM station_match.station_straight_distance('新宿駅', '東京');
-

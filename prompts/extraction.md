@@ -664,4 +664,3 @@ Structured Outputsは出力形式を制御する仕組みであり、分類や�
 - affiliationType は employee / freelance / unknown のいずれかとする。
 - 不明項目は原則 null とし、空文字列の正規化やスキーマ変更は行わない。
 - 配列項目、フィールド名、型は既存のStructured Outputs JSON Schemaを優先する。
-

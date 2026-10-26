@@ -1,6 +1,11 @@
+import { parseAmountRange } from "./amount-range.ts";
 import type { Project } from "./schemas.ts";
 
-export type ProjectSearchRecord = Project & { readonly id: string };
+export type ProjectSearchRecord = Project & {
+  readonly id: string;
+  readonly rateMin?: bigint | null;
+  readonly rateMax?: bigint | null;
+};
 
 /** 金額フィルタを明示的に適用する場合だけ使う。NULLは一致扱いにしない。 */
 export function matchesProjectTalentPrice(project: ProjectSearchRecord, talent: import("./schemas.ts").Talent & { readonly id: string }): boolean {
@@ -15,45 +20,36 @@ export function splitProjectKeywords(query: string): readonly string[] {
   return normalizeText(query).split(" ").filter(Boolean);
 }
 
-function parseAmount(value: string): number | undefined {
+function parseSearchAmount(value: string): number | undefined {
+  const parsed = parseAmountRange(value);
+  if (parsed.minYen !== null && parsed.minYen === parsed.maxYen) return parsed.minYen;
+
   const normalized = normalizeText(value).replaceAll(",", "");
-  if (!normalized || /[〜~～-]|以上|以下|未満|超|範囲|から/u.test(normalized)) return undefined;
-
-  const manMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*万\s*(\d+)?\s*円?$/u);
-  if (manMatch?.[1]) {
-    const amount = Number(manMatch[1]) * 10000 + (manMatch[2] ? Number(manMatch[2]) : 0);
-    return Number.isFinite(amount) ? amount : undefined;
-  }
-
-  const yenMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*円$/u);
-  if (yenMatch?.[1]) {
-    const amount = Number(yenMatch[1]);
-    return Number.isFinite(amount) ? amount : undefined;
-  }
-
-  if (!/^\d+(?:\.\d+)?$/u.test(normalized)) return undefined;
+  if (!/^\d+$/u.test(normalized)) return undefined;
   const amount = Number(normalized);
-  return Number.isFinite(amount) ? amount : undefined;
+  return Number.isSafeInteger(amount) ? amount : undefined;
 }
 
 function matchesText(value: string | null, keyword: string): boolean {
   return value !== null && normalizeText(value).includes(keyword);
 }
 
-function matchesRate(value: string | null, keyword: string): boolean {
-  const keywordAmount = parseAmount(keyword);
-  if (keywordAmount !== undefined) return value !== null && parseAmount(value) === keywordAmount;
-  return matchesText(value, keyword);
+function matchesRateRange(project: ProjectSearchRecord, keyword: string): boolean {
+  const keywordAmount = parseSearchAmount(keyword);
+  if (keywordAmount === undefined || project.rateMin == null || project.rateMax == null) return false;
+  const amount = BigInt(keywordAmount);
+  return project.rateMin <= amount && amount <= project.rateMax;
 }
 
 function matchesKeyword(project: ProjectSearchRecord, keyword: string): boolean {
+  const amountKeyword = parseSearchAmount(keyword);
   return matchesText(project.projectName, keyword) ||
     (project.requiredSkills ?? []).some((skill) => matchesText(skill, keyword)) ||
     matchesText(project.process, keyword) ||
     matchesText(project.location, keyword) ||
     matchesText(project.workStyle, keyword) ||
     matchesText(project.startDate, keyword) ||
-    matchesRate(project.rate, keyword);
+    (amountKeyword !== undefined ? matchesRateRange(project, keyword) : matchesText(project.rate, keyword));
 }
 
 export function matchesProjectSearch(project: ProjectSearchRecord, query: string): boolean {

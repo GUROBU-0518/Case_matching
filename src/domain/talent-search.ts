@@ -1,6 +1,11 @@
+import { parseAmountRange } from "./amount-range.ts";
 import type { Talent } from "./schemas.ts";
 
-export type TalentSearchRecord = Talent & { readonly id: string };
+export type TalentSearchRecord = Talent & {
+  readonly id: string;
+  readonly desiredRateMin?: bigint | null;
+  readonly desiredRateMax?: bigint | null;
+};
 
 function normalizeText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("ja-JP").replace(/\s+/gu, " ").trim();
@@ -10,43 +15,33 @@ export function splitTalentKeywords(query: string): readonly string[] {
   return normalizeText(query).split(" ").filter(Boolean);
 }
 
-function parseAmount(value: string): number | undefined {
+function parseSearchAmount(value: string): number | undefined {
+  const parsed = parseAmountRange(value);
+  if (parsed.minYen !== null && parsed.minYen === parsed.maxYen) return parsed.minYen;
+
   const normalized = normalizeText(value).replaceAll(",", "");
-  if (!normalized || /[〜~～-]|以上|以下|未満|超|範囲/u.test(normalized)) return undefined;
-
-  const manMatch = normalized.match(/(\d+(?:\.\d+)?)\s*万\s*(\d+)?\s*円?/u);
-  if (manMatch?.[1]) {
-    const man = Number(manMatch[1]) * 10000;
-    const remainder = manMatch[2] ? Number(manMatch[2]) : 0;
-    return Number.isFinite(man + remainder) ? man + remainder : undefined;
-  }
-
-  const yenMatch = normalized.match(/(\d+(?:\.\d+)?)\s*円/u);
-  if (yenMatch?.[1]) {
-    const yen = Number(yenMatch[1]);
-    return Number.isFinite(yen) ? yen : undefined;
-  }
-
-  if (!/^\d+(?:\.\d+)?$/u.test(normalized)) return undefined;
-  const unitlessYen = Number(normalized);
-  return Number.isFinite(unitlessYen) ? unitlessYen : undefined;
+  if (!/^\d+$/u.test(normalized)) return undefined;
+  const amount = Number(normalized);
+  return Number.isSafeInteger(amount) ? amount : undefined;
 }
 
 function matchesText(value: string | null, keyword: string): boolean {
   return value !== null && normalizeText(value).includes(keyword);
 }
 
-function matchesDesiredRate(value: string | null, keyword: string): boolean {
-  const keywordAmount = parseAmount(keyword);
-  if (keywordAmount !== undefined) return value !== null && parseAmount(value) === keywordAmount;
-  return matchesText(value, keyword);
+function matchesDesiredRateRange(talent: TalentSearchRecord, keyword: string): boolean {
+  const keywordAmount = parseSearchAmount(keyword);
+  if (keywordAmount === undefined || talent.desiredRateMin == null || talent.desiredRateMax == null) return false;
+  const amount = BigInt(keywordAmount);
+  return talent.desiredRateMin <= amount && amount <= talent.desiredRateMax;
 }
 
 function matchesKeyword(talent: TalentSearchRecord, keyword: string): boolean {
+  const amountKeyword = parseSearchAmount(keyword);
   return matchesText(talent.nameOrInitial, keyword) ||
     (talent.technicalSkills ?? []).some((skill) => matchesText(skill, keyword)) ||
     matchesText(talent.nearestStation, keyword) ||
-    matchesDesiredRate(talent.desiredRate, keyword) ||
+    (amountKeyword !== undefined ? matchesDesiredRateRange(talent, keyword) : matchesText(talent.desiredRate, keyword)) ||
     matchesText(talent.availableFrom, keyword) ||
     matchesText(talent.affiliation, keyword);
 }

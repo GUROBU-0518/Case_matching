@@ -33,5 +33,3 @@ describe("T07 Graph-T04-AI-DB integration", () => {
     expect(retry).toMatchObject({ totalCount: 1, successCount: 1, failureCount: 0 }); expect(succeeding.classifyAndExtract).toHaveBeenCalledTimes(1); expect(db.processing[0].status).toBe("succeeded"); expect(db.projects).toHaveLength(1); expect(db.talents).toHaveLength(1); expect(db.projects[0].sourceText).toBe("案件本文"); expect(db.talents[0].affiliation).toBe("BP");
   });
 });
-
-

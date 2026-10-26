@@ -382,4 +382,3 @@
 - 出力は既存のStructured Outputs JSON Schemaに従う。
 - 分類値は project / talent / mixed / other のみを使用する。
 - JSON SchemaとZodの分類・配列件数整合性に従う。
-

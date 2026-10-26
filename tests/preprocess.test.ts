@@ -78,5 +78,3 @@ describe("preprocessMailBody", () => {
     expect(result.processedBody).toContain("商流制限：一次請け限定");
   });
 });
-
-

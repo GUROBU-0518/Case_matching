@@ -3,7 +3,6 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadLocalEmails } from "../src/mail/local-loader.ts";
-
 describe("loadLocalEmails", () => {
   it("複数メールを本文を変更せず読み込む", async () => {
     const directory = await mkdtemp(join(tmpdir(), "case-mail-"));
@@ -31,6 +30,3 @@ describe("loadLocalEmails", () => {
     await expect(loadLocalEmails(directory)).rejects.toThrow();
   });
 });
-
-
-
