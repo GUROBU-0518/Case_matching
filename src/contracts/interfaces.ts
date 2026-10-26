@@ -45,6 +45,7 @@ export interface ProjectsApiResponse {
 
 export interface MatchesApiResponse {
   readonly talents: readonly Talent[];
+  readonly totalCount: number;
   readonly nextCursor: string | null;
   readonly hasMore: boolean;
 }

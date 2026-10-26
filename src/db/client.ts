@@ -1,9 +1,13 @@
-import { PrismaClient } from "@prisma/client";
+import { createRequire } from "node:module";
+import type { PrismaClient as PrismaClientType } from "@prisma/client";
 
-let client: PrismaClient | undefined;
+const require = createRequire(import.meta.url);
+const { PrismaClient: PrismaClientConstructor } = require("../../node_modules/.prisma/client/index.js") as typeof import("@prisma/client");
 
-export function getPrismaClient(): PrismaClient {
-  client ??= new PrismaClient();
+let client: PrismaClientType | undefined;
+
+export function getPrismaClient(): PrismaClientType {
+  client ??= new PrismaClientConstructor();
   return client;
 }
 
