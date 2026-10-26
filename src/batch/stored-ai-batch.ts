@@ -5,6 +5,7 @@ import { claimStoredAiProcessing, persistAiExtraction, recordAiProcessingFailure
 import { saveProcessedBodyIfMissing } from "../db/mail-repository.ts";
 import { preprocessMailBody } from "../mail/preprocess.ts";
 import type { GraphMailClient } from "../mail/graph-client.ts";
+import { formatSafeAiFailureDiagnostic, toSafeAiFailureDiagnostic } from "../ai/failure-diagnostic.ts";
 
 export interface StoredAiBatchResult { totalCount: number; successCount: number; failureCount: number; deferredCount: number; bodyRefetchCandidates: number; bodyRefetchSuccessCount: number; bodyRefetchFailureCount: number; }
 
@@ -24,7 +25,7 @@ export async function runStoredAiPendingBatch(prisma: PrismaClient, classifier: 
     if (!processedBody?.trim()) {
       bodyRefetchCandidates += 1;
       if (!options.graphClient) {
-        await recordAiProcessingFailure(prisma, candidate.id, "temporary", "前処理済み本文がなくGraph再取得経路が未設定です");
+        await recordAiProcessingFailure(prisma, candidate.id, "temporary", formatSafeAiFailureDiagnostic({ stage: "graph_refetch", diagnosticCode: "graph_client_missing", fields: [], retryable: true }));
         bodyRefetchFailureCount += 1;
         failureCount += 1;
         continue;
@@ -39,7 +40,8 @@ export async function runStoredAiPendingBatch(prisma: PrismaClient, classifier: 
         bodyRefetchFailureCount += 1;
         const value = error as { category?: string };
         const temporary = value.category !== "authentication" && value.category !== "validation";
-        await recordAiProcessingFailure(prisma, candidate.id, temporary ? "temporary" : "permanent", "未保存本文のGraph再取得に失敗しました");
+        const diagnostic = toSafeAiFailureDiagnostic(error, "graph_refetch");
+        await recordAiProcessingFailure(prisma, candidate.id, temporary ? "temporary" : "permanent", formatSafeAiFailureDiagnostic({ ...diagnostic, stage: "graph_refetch" }));
         failureCount += 1;
         continue;
       }
@@ -52,7 +54,8 @@ export async function runStoredAiPendingBatch(prisma: PrismaClient, classifier: 
     } catch (error) {
       const value = error as { category?: string; diagnosticCode?: string };
       const temporary = value.category === "rate_limit" || value.category === "timeout" || value.category === "temporary";
-      await recordAiProcessingFailure(prisma, candidate.id, temporary ? "temporary" : value.diagnosticCode ?? value.category ?? "unknown", "保存済みメールAI処理に失敗しました");
+      const diagnostic = toSafeAiFailureDiagnostic(error, "openai_request");
+      await recordAiProcessingFailure(prisma, candidate.id, temporary ? "temporary" : "permanent", formatSafeAiFailureDiagnostic(diagnostic));
       failureCount += 1;
     }
   }

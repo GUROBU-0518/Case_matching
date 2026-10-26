@@ -7,6 +7,7 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 6) { console.error("--limit
 const [{ getPrismaClient }, { parseGraphConfig }, { GraphTokenProvider }, { GraphMailClient }, { preprocessMailBody }, { OpenAiClassifier }, { persistAiExtraction, claimStoredAiProcessing }] = await Promise.all([
   import("../db/client.ts"), import("../mail/graph-config.ts"), import("../mail/graph-auth.ts"), import("../mail/graph-client.ts"), import("../mail/preprocess.ts"), import("./openai-client.ts"), import("../db/mail-repository.ts"),
 ]);
+const { toSafeAiFailureDiagnostic, formatSafeAiFailureDiagnostic } = await import("./failure-diagnostic.ts");
 const prisma = getPrismaClient();
 try {
   const candidates = await prisma.mailMessage.findMany({ where: { subject: { startsWith: prefix } }, include: { aiProcessing: true }, orderBy: { receivedAt: "asc" }, take: limit });
@@ -20,13 +21,15 @@ try {
   } };
   let success = 0; let failure = 0;
   for (const mail of candidates) {
+    let failureStage: "graph_refetch" | "preprocessing" | "openai_request" = "graph_refetch";
     try {
       if (!await claimStoredAiProcessing(prisma, mail.id, new Date(Date.now() - 15 * 60 * 1000))) continue;
       let body = mail.processedBody;
-      if (body == null) { const fetched = await graph.fetchMessage(mail.mailboxId, mail.graphMessageId); if (fetched.kind === "removed") throw new Error("メールが削除されています"); body = (await preprocessMailBody(fetched.email.body)).processedBody; await prisma.mailMessage.update({ where: { id: mail.id }, data: { processedBody: body } }); }
+      if (body == null) { const fetched = await graph.fetchMessage(mail.mailboxId, mail.graphMessageId); if (fetched.kind === "removed") throw new Error("メールが削除されています"); failureStage = "preprocessing"; body = (await preprocessMailBody(fetched.email.body, fetched.contentType)).processedBody; await prisma.mailMessage.update({ where: { id: mail.id }, data: { processedBody: body } }); }
+      failureStage = "openai_request";
       const response = await classifier.classifyAndExtract({ subject: mail.subject ?? "", processedBody: body });
       await persistAiExtraction(prisma, mail.id, response, body); success += 1;
-    } catch (error) { failure += 1; const value = error as { category?: string; diagnosticCode?: string }; const category = value.category; await prisma.aiProcessing.update({ where: { mailMessageId: mail.id }, data: { status: "failed", aiStatus: category === "rate_limit" || category === "timeout" || category === "temporary" ? "failed_temporary" : "failed_permanent", errorType: value.diagnosticCode ?? category ?? "unknown", errorMessage: "保存済みメールAI処理に失敗しました", endedAt: new Date() } }); }
+    } catch (error) { failure += 1; const value = error as { category?: string }; const temporary = value.category === "rate_limit" || value.category === "timeout" || value.category === "temporary"; const diagnostic = toSafeAiFailureDiagnostic(error, failureStage); await prisma.aiProcessing.update({ where: { mailMessageId: mail.id }, data: { status: "failed", aiStatus: temporary ? "failed_temporary" : "failed_permanent", errorType: temporary ? "temporary" : value.category ?? "unknown", errorMessage: formatSafeAiFailureDiagnostic({ ...diagnostic, stage: failureStage }), endedAt: new Date() } }); }
   }
   console.log(`AI成功件数: ${success}`); console.log(`AI失敗件数: ${failure}`); console.log(`OpenAI APIリクエスト試行回数: ${apiCalls}`); console.log("DeltaLink更新: 実施なし");
 } finally { await prisma.$disconnect(); }

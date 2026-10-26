@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import type { CommonEmail } from "../mail/types.ts";
 import type { MailBatchResult, MailItemResult } from "../batch/mail-batch.ts";
 import type { AiResponse } from "../ai/types.ts";
+import { formatSafeAiFailureDiagnostic } from "../ai/failure-diagnostic.ts";
 import { manYenToYenBigInt } from "../domain/amount-range.ts";
 
 export interface RetryCandidate { id: string; mailMessageId: string | null; mailboxId: string | null; graphMessageId: string; subject: string | null; status: string; errorType: string | null; retryCount: number; }
@@ -29,7 +30,7 @@ export async function persistMailResult(prisma: PrismaClient, email: CommonEmail
       status: (options.deferProcessingStatus || options.markAiPending) && result.success ? "pending" : result.status,
       startedAt: new Date(), endedAt: new Date(),
       errorType: result.errorCategory ?? null,
-      errorMessage: result.error ?? null,
+      errorMessage: result.diagnostic ? formatSafeAiFailureDiagnostic(result.diagnostic) : result.error ?? null,
       retryCount,
       lastRetriedAt: options.isBatchRetry ? new Date() : existing?.aiProcessing?.lastRetriedAt ?? null,
       zodValidationStatus: result.success ? "succeeded" : "failed",
@@ -124,10 +125,22 @@ export async function saveProcessedBodyIfMissing(prisma: PrismaClient, mailMessa
   return result.count === 1;
 }
 
-export async function persistAiExtraction(prisma: PrismaClient, mailMessageId: string, response: AiResponse, sourceText: string): Promise<PersistAiExtractionResult> {
+export interface PersistAiExtractionOptions {
+  /** Reprocessing path: verify the claimed failed mail and update only its processed body in the same transaction. */
+  reprocess?: { expectedProcessedBody: string | null };
+}
+
+export async function persistAiExtraction(prisma: PrismaClient, mailMessageId: string, response: AiResponse, sourceText: string, options: PersistAiExtractionOptions = {}): Promise<PersistAiExtractionResult> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.aiProcessing.findUnique({ where: { mailMessageId } });
     if (existing?.aiStatus === "succeeded") return { skipped: true, projectCount: 0, talentCount: 0 };
+    if (options.reprocess) {
+      const mail = await tx.mailMessage.findUnique({ where: { id: mailMessageId }, select: { processedBody: true, _count: { select: { projects: true, talents: true } } } });
+      if (!mail || mail.processedBody !== options.reprocess.expectedProcessedBody || mail._count.projects !== 0 || mail._count.talents !== 0 || existing?.aiStatus !== "processing" || existing.status !== "pending") {
+        throw new Error("再処理前提条件が変わったため保存を中止しました");
+      }
+      await tx.mailMessage.update({ where: { id: mailMessageId }, data: { processedBody: sourceText } });
+    }
     const persistable = filterExtractionByClassification(response);
     const projects = persistable.projects.map((project) => ({ id: randomUUID(), projectName: project.projectName, summary: project.summary, rate: project.price, unitPriceMin: project.priceMin ?? null, unitPriceMax: project.priceMax ?? null, rateMin: manYenToYenBigInt(project.priceMin), rateMax: manYenToYenBigInt(project.priceMax), location: project.location, nearestStation: project.nearestStation, workStyle: project.workStyle, startDate: project.startDate, requiredSkills: project.requiredSkills ?? [], preferredSkills: project.preferredSkills ?? [], headcount: parseHeadcount(project.headcount), process: project.phase, commercialRestrictions: project.commercialFlowRestriction, sourceText, mailMessageId }));
     const talents = persistable.talents.map((talent) => ({ id: randomUUID(), nameOrInitial: talent.name, desiredRate: talent.desiredPrice, desiredPriceMin: talent.desiredPriceMin ?? null, desiredPriceMax: talent.desiredPriceMax ?? null, desiredRateMin: manYenToYenBigInt(talent.desiredPriceMin), desiredRateMax: manYenToYenBigInt(talent.desiredPriceMax), nearestStation: talent.nearestStation, technicalSkills: talent.skills ?? [], availableFrom: talent.availableFrom, availablePeriod: talent.availablePeriod, age: talent.age, yearsOfExperience: talent.yearsOfExperience, desiredWorkStyle: talent.desiredWorkStyle, availableProcess: talent.availablePhases ?? [], affiliation: "BP", affiliationType: talent.affiliationType, notes: talent.notes, sourceText, mailMessageId }));
@@ -135,6 +148,31 @@ export async function persistAiExtraction(prisma: PrismaClient, mailMessageId: s
     if (talents.length > 0) await tx.talent.createMany({ data: talents });
     await tx.aiProcessing.update({ where: { mailMessageId }, data: { status: "succeeded", aiStatus: "succeeded", classification: response.classification, errorType: null, errorMessage: null, zodValidationStatus: "succeeded", endedAt: new Date() } });
     return { skipped: false, projectCount: projects.length, talentCount: talents.length };
+  }, { isolationLevel: "Serializable" });
+}
+
+/** Atomically claims one explicitly selected permanent failure; regular retries never call this path. */
+export async function claimFailedPermanentForExactMail(
+  prisma: PrismaClient,
+  target: { id: string; subject: string; expectedProcessedBody: string | null },
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const mail = await tx.mailMessage.findUnique({
+      where: { id: target.id },
+      select: {
+        subject: true,
+        processedBody: true,
+        _count: { select: { projects: true, talents: true } },
+        aiProcessing: { select: { aiStatus: true, status: true, retryCount: true } },
+      },
+    });
+    if (!mail || mail.subject !== target.subject || mail.processedBody !== target.expectedProcessedBody || mail._count.projects !== 0 || mail._count.talents !== 0 || mail.aiProcessing?.aiStatus !== "failed_permanent" || mail.aiProcessing.status !== "failed" || mail.aiProcessing.retryCount >= 3) return false;
+    const now = new Date();
+    const claimed = await tx.aiProcessing.updateMany({
+      where: { mailMessageId: target.id, aiStatus: "failed_permanent", status: "failed", retryCount: mail.aiProcessing.retryCount },
+      data: { aiStatus: "processing", status: "pending", retryCount: { increment: 1 }, startedAt: now, endedAt: null, lastRetriedAt: now },
+    });
+    return claimed.count === 1;
   }, { isolationLevel: "Serializable" });
 }
 

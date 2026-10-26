@@ -34,4 +34,21 @@ describe("Graph Delta to T04 batch adapter", () => {
     expect(classifyAndExtract).toHaveBeenCalledTimes(3);
     expect(batch.items[0]).toMatchObject({ status: "failed", errorCategory: "temporary", attempts: 3, retryCount: 2 });
   });
+  it("AI検証失敗の段階・コード・フィールドを値なしで保持する", async () => {
+    const fresh = email("ai-zod");
+    const client = { fetchDelta: vi.fn(async () => result([], [{ kind: "message" as const, email: fresh, contentType: "text" as const }])) };
+    const classifyAndExtract = vi.fn(async () => { throw Object.assign(new Error("本文を含む可能性のあるメッセージ"), { category: "validation", stage: "zod_validation", diagnosticCode: "zod_validation_error", fields: ["projects.0.priceMin"] }); });
+    const batch = await runGraphMailBatch(client as never, "box@example.com", 3, { classifier: { classifyAndExtract } as never, retry: { maxAttempts: 1 } });
+    expect(batch.items[0]).toMatchObject({ success: false, diagnostic: { stage: "zod_validation", diagnosticCode: "zod_validation_error", fields: ["projects.0.priceMin"], retryable: false } });
+    expect(JSON.stringify(batch.items[0]?.diagnostic)).not.toContain("本文");
+  });
+  it("前処理失敗とAI応答失敗を段階で区別し、AIを呼ばない", async () => {
+    const fresh = email("preprocess-fail");
+    const client = { fetchDelta: vi.fn(async () => result([], [{ kind: "message" as const, email: fresh, contentType: "text" as const }])) };
+    const classifyAndExtract = vi.fn();
+    const batch = await runGraphMailBatch(client as never, "box@example.com", 3, { classifier: { classifyAndExtract } as never, preprocess: async () => { throw new Error("private message body"); }, retry: { maxAttempts: 1 } });
+    expect(batch.items[0]).toMatchObject({ success: false, diagnostic: { stage: "preprocessing", diagnosticCode: "preprocessing_unknown_error", retryable: false } });
+    expect(classifyAndExtract).not.toHaveBeenCalled();
+    expect(JSON.stringify(batch.items[0]?.diagnostic)).not.toContain("private");
+  });
 });

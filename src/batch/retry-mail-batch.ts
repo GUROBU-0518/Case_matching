@@ -1,7 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { findRetryCandidates, isEligibleForNextBatchRetry, persistMailBatch, persistAiExtractionForEmail, recordAiProcessingFailure, recordRetryFailure, type RetryCandidate } from "../db/mail-repository.ts";
 import type { GraphMailClient, GraphClientError } from "../mail/graph-client.ts";
-import { runMailBatch, MailProcessingError, type MailBatchResult, type MailPreprocessor } from "./mail-batch.ts";
+import { runMailBatch, MailProcessingError, wrapAiFailure, type MailBatchResult, type MailPreprocessor } from "./mail-batch.ts";
+import type { PreprocessedMailBody } from "../mail/preprocess.ts";
+import { formatSafeAiFailureDiagnostic } from "../ai/failure-diagnostic.ts";
 import type { CommonEmail } from "../mail/types.ts";
 import type { OpenAiClassifier } from "../ai/openai-client.ts";
 import type { AiUsageBudget } from "../ai/usage-budget.ts";
@@ -61,14 +63,15 @@ export async function runRetryMailBatch(
     }
     const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
     const processor = options.classifier ? async (current: CommonEmail, preprocess: MailPreprocessor) => {
-      const processed = await preprocess(current.body, current.contentType);
-      try { if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false }); const response = await options.classifier!.classifyAndExtract({ subject: current.subject, processedBody: processed.processedBody }); aiResults.set(current.messageId, response); return processed; }
-      catch (cause) {
-        const ai = cause as { category?: string; status?: number; retryable?: boolean };
-        const category = ai.category === "rate_limit" || ai.category === "timeout" || ai.category === "temporary" ? "temporary" : ai.category === "authentication" || ai.category === "validation" ? "permanent" : "unknown";
-        const code = typeof ai.status === "number" ? `HTTP_${ai.status}` : ai.category;
-        throw new MailProcessingError("AI処理に失敗しました", { category, ...(code ? { code } : {}), retryable: ai.retryable === true && category === "temporary" });
-      }
+      let processed: PreprocessedMailBody;
+      try { processed = await preprocess(current.body, current.contentType); }
+      catch (cause) { throw wrapAiFailure(cause, "preprocessing"); }
+      try {
+        if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "ai_call_limit", retryable: false, diagnostic: { stage: "ai_budget", diagnosticCode: "ai_call_limit", fields: [], retryable: false } });
+        const response = await options.classifier!.classifyAndExtract({ subject: current.subject, processedBody: processed.processedBody });
+        aiResults.set(current.messageId, response);
+        return processed;
+      } catch (cause) { throw wrapAiFailure(cause, "openai_request"); }
     } : undefined;
     try {
       const batch: MailBatchResult = await runMailBatch(async () => [email], undefined, options.concurrency ?? 1, {}, processor);
@@ -79,7 +82,7 @@ export async function runRetryMailBatch(
         const response = aiResults.get(email.messageId);
         if (response) {
           try { await persistAiExtractionForEmail(prisma, email.mailboxId, email.messageId, response, item.processedBody ?? ""); }
-          catch { dbFailed = true; await recordAiProcessingFailure(prisma, email.messageId, "db", "AI抽出結果の保存に失敗しました"); }
+          catch { dbFailed = true; await recordAiProcessingFailure(prisma, email.messageId, "db", formatSafeAiFailureDiagnostic({ stage: "db_persistence", diagnosticCode: "ai_extraction_persist_failed", fields: [], retryable: false })); }
         }
       }
       const failed = !item?.success || dbFailed;
