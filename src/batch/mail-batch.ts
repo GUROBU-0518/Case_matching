@@ -1,5 +1,6 @@
 import type { CommonEmail } from "../mail/types.ts";
 import { preprocessMailBody, type PreprocessedMailBody } from "../mail/preprocess.ts";
+import { formatSafeAiFailureDiagnostic, toSafeAiFailureDiagnostic, type AiFailureStage, type SafeAiFailureDiagnostic } from "../ai/failure-diagnostic.ts";
 
 export type ErrorCategory = "temporary" | "permanent" | "unknown";
 export type MailBatchStatus = "succeeded" | "partial_failed" | "failed";
@@ -8,12 +9,14 @@ export class MailProcessingError extends Error {
   readonly category: ErrorCategory;
   readonly code: string | undefined;
   readonly retryable: boolean;
-  constructor(message: string, options: { category: ErrorCategory; code?: string; retryable?: boolean }) {
+  readonly diagnostic: SafeAiFailureDiagnostic | undefined;
+  constructor(message: string, options: { category: ErrorCategory; code?: string; retryable?: boolean; diagnostic?: SafeAiFailureDiagnostic }) {
     super(message);
     this.name = "MailProcessingError";
     this.category = options.category;
     this.code = options.code;
     this.retryable = options.retryable ?? options.category === "temporary";
+    this.diagnostic = options.diagnostic;
   }
 }
 
@@ -22,11 +25,26 @@ export interface ClassifiedError {
   code: string | undefined;
   retryable: boolean;
   message: string;
+  diagnostic?: SafeAiFailureDiagnostic;
 }
 
 export function classifyMailError(error: unknown): ClassifiedError {
-  if (error instanceof MailProcessingError) return { category: error.category, code: error.code, retryable: error.retryable, message: error.message };
-  return { category: "unknown", code: undefined, retryable: false, message: error instanceof Error ? error.message : "メール処理に失敗しました" };
+  if (error instanceof MailProcessingError) return { category: error.category, code: error.code, retryable: error.retryable, message: error.message, ...(error.diagnostic ? { diagnostic: error.diagnostic } : {}) };
+  return { category: "unknown", code: undefined, retryable: false, message: error instanceof Error ? error.message : "メール処理に失敗しました", diagnostic: toSafeAiFailureDiagnostic(error, "unknown") };
+}
+
+export function wrapAiFailure(error: unknown, fallbackStage: AiFailureStage): MailProcessingError {
+  if (error instanceof MailProcessingError) return error;
+  const value = error !== null && typeof error === "object" ? error as Record<string, unknown> : {};
+  const rawCategory = value.category;
+  const category: ErrorCategory = rawCategory === "rate_limit" || rawCategory === "timeout" || rawCategory === "temporary" ? "temporary"
+    : rawCategory === "authentication" || rawCategory === "validation" || rawCategory === "configuration" ? "permanent" : "unknown";
+  const diagnostic = toSafeAiFailureDiagnostic(error, fallbackStage);
+  return new MailProcessingError("AI処理に失敗しました", { category, code: diagnostic.diagnosticCode, retryable: diagnostic.retryable && category === "temporary", diagnostic });
+}
+
+export function formatMailFailureDiagnostic(diagnostic: SafeAiFailureDiagnostic): string {
+  return formatSafeAiFailureDiagnostic(diagnostic);
 }
 
 export interface MailItemResult {
@@ -39,6 +57,7 @@ export interface MailItemResult {
   errorCategory?: ErrorCategory;
   errorCode: string | undefined;
   retryable?: boolean;
+  diagnostic?: SafeAiFailureDiagnostic;
   originalLength: number;
   processedLength: number;
   processedBody?: string;
@@ -99,7 +118,7 @@ export async function processOneMail(email: CommonEmail, preprocess: MailPreproc
     mailboxId: email.mailboxId, messageId: email.messageId, success: false, status: "failed",
     attempts, retryCount: attempts - 1, errorCategory: classified.category, errorCode: classified.code,
     retryable: classified.retryable, originalLength: email.body.length, processedLength: 0, originalBody: email.body,
-    error: classified.message,
+    error: classified.message, ...(classified.diagnostic ? { diagnostic: classified.diagnostic } : {}),
   };
 }
 
