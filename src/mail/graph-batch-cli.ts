@@ -48,7 +48,7 @@ try {
       console.log(`再試行上限到達件数: ${retry.items.filter((item) => item.status === "failed" && item.retryCount >= 3).length}`);
       stage = "Graph認証 / Delta取得 / CommonEmail変換 / T04処理 / DB保存 / deltaLink確定";
       const result = await runGraphMailBatchWithPersistence(graph, client, mailboxId, top, { ...(classifier ? { classifier } : {}), ...(subjectPrefix ? { subjectPrefix } : {}), ...(aiBudget ? { aiBudget } : {}) });
-      const stored = classifier && aiBudget ? await runStoredAiPendingBatch(client, classifier, { mailboxId, budget: aiBudget }) : undefined;
+      const stored = classifier && aiBudget ? await runStoredAiPendingBatch(client, classifier, { mailboxId, budget: aiBudget, graphClient: graphMessages }) : undefined;
       const changes = result.batch.totalCount;
       console.log(`メールボックス処理: ${mailboxId}`);
       console.log(`取得種別: ${existing ? "差分取得" : "初回取得"}`);
@@ -61,11 +61,24 @@ try {
       console.log(`AI成功件数: ${args.includes("--ai") ? result.batch.successCount : 0}`);
       console.log(`AI失敗件数: ${args.includes("--ai") ? result.batch.failureCount : 0}`);
       console.log(`AI API試行回数: ${aiBudget?.count ?? 0}/${aiBudget?.limit ?? 0}`);
-      if (stored) { console.log(`DB未処理回収件数: ${stored.totalCount}`); console.log(`DB未処理AI成功件数: ${stored.successCount}`); console.log(`DB未処理AI失敗件数: ${stored.failureCount}`); console.log(`AI上限繰越件数: ${stored.deferredCount}`); }
+      if (stored) { console.log(`DB未処理回収件数: ${stored.totalCount}`); console.log(`本文再取得対象件数: ${stored.bodyRefetchCandidates}`); console.log(`本文再取得成功件数: ${stored.bodyRefetchSuccessCount}`); console.log(`本文再取得失敗件数: ${stored.bodyRefetchFailureCount}`); console.log(`DB未処理AI成功件数: ${stored.successCount}`); console.log(`DB未処理AI失敗件数: ${stored.failureCount}`); console.log(`AI上限繰越件数: ${stored.deferredCount}`); }
       console.log(`既存成功済みスキップ件数: ${result.aiSkippedSucceeded}`);
       console.log(`恒久失敗スキップ件数: ${result.aiSkippedPermanent}`);
       console.log(`一時失敗・再試行対象件数: ${result.aiSkippedTemporary}`);
       console.log(`deltaLink確定: ${result.deltaLinkSaved ? "成功" : result.safeHandoff ? "失敗" : "未実施"}`);
+      if (result.metrics) {
+        console.log(`Delta取得時間(ms): ${result.metrics.deltaDurationMs}`);
+        console.log(`Delta取得ページ数: ${result.metrics.pagesFetched}`);
+        console.log(`Delta差分件数: ${result.metrics.deltaMessageCount}`);
+        console.log(`メール保存時間(ms): ${result.metrics.mailPersistenceDurationMs}`);
+        console.log(`AI抽出結果保存時間(ms): ${result.metrics.extractionPersistenceDurationMs}`);
+        const aiDurations = result.metrics.aiTimings.map((item) => item.durationMs);
+        const aiTotal = aiDurations.reduce((sum, value) => sum + value, 0);
+        console.log(`AI処理時間合計(ms): ${aiTotal}`);
+        console.log(`AI処理時間平均(ms): ${aiDurations.length ? aiTotal / aiDurations.length : 0}`);
+        console.log(`AI処理時間最短(ms): ${aiDurations.length ? Math.min(...aiDurations) : 0}`);
+        console.log(`AI処理時間最長(ms): ${aiDurations.length ? Math.max(...aiDurations) : 0}`);
+      }
       if (preview) for (const item of result.batch.items) console.log(`前処理確認 ${item.messageId}: ${item.originalLength}文字 -> ${item.processedLength}文字`);
     } catch (error) {
       console.error(`メールボックス処理: 失敗（${mailboxId}）`);

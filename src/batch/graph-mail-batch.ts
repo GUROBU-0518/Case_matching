@@ -39,11 +39,23 @@ export interface GraphMailBatchPersistenceResult {
   aiSkippedSucceeded: number;
   aiSkippedPermanent: number;
   aiSkippedTemporary: number;
+  metrics?: {
+    deltaStartedAt: Date;
+    deltaEndedAt: Date;
+    deltaDurationMs: number;
+    pagesFetched: number;
+    deltaMessageCount: number;
+    mailPersistenceDurationMs: number;
+    extractionPersistenceDurationMs: number;
+    aiTimings: Array<{ number: number; durationMs: number; success: boolean }>;
+  };
 }
 
 /** Graph取得、T04処理、DB引き渡し、deltaLink確定を順序保証付きで実行する。 */
 export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient, prisma: PrismaClient, mailboxId: string, top = 3, options: GraphMailBatchOptions = {}): Promise<GraphMailBatchPersistenceResult> {
+  const deltaStartedAt = new Date();
   const delta = await client.fetchDelta(mailboxId, top);
+  const deltaEndedAt = new Date();
   const emails = delta.newMessages.filter((message) => message.kind === "message").map((message) => message.email).filter((email) => !options.subjectPrefix || email.subject.startsWith(options.subjectPrefix));
   const existing = typeof prisma.mailMessage.findMany === "function"
     ? await prisma.mailMessage.findMany({ where: { mailboxId, graphMessageId: { in: emails.map((email) => email.messageId) } }, select: { graphMessageId: true, aiProcessing: { select: { aiStatus: true, status: true, errorType: true, retryCount: true } } } })
@@ -62,13 +74,21 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
     return true;
   }) : emails;
   const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
+  const aiTimings: Array<{ number: number; durationMs: number; success: boolean }> = [];
   const processor = options.classifier ? async (email: CommonEmail, preprocess: MailPreprocessor) => {
     const processed = await preprocess(email.body);
     try {
       if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false });
-      const response = await options.classifier!.classifyAndExtract({ subject: email.subject, processedBody: processed.processedBody });
-      aiResults.set(email.messageId, response);
-      return processed;
+      const aiStartedAt = Date.now();
+      let aiSucceeded = false;
+      try {
+        const response = await options.classifier!.classifyAndExtract({ subject: email.subject, processedBody: processed.processedBody });
+        aiResults.set(email.messageId, response);
+        aiSucceeded = true;
+        return processed;
+      } finally {
+        aiTimings.push({ number: aiTimings.length + 1, durationMs: Date.now() - aiStartedAt, success: aiSucceeded });
+      }
     } catch (error) {
       const ai = error as { category?: string; status?: number; retryable?: boolean; message?: string };
       const category = ai.category === "rate_limit" || ai.category === "timeout" || ai.category === "temporary" ? "temporary" : ai.category === "authentication" || ai.category === "validation" ? "permanent" : "unknown";
@@ -78,7 +98,10 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
   } : undefined;
   const batch = await runMailBatch(async () => aiEmails, options.preprocess, options.concurrency ?? 3, options.retry, processor);
   let persistence: PersistBatchSummary;
+  const mailPersistenceStartedAt = Date.now();
   try { persistence = await persistMailBatch(prisma, aiEmails, batch, options.classifier ? { deferProcessingStatus: true } : {}); } catch { return { batch, persistence: undefined, deltaLinkSaved: false, safeHandoff: false, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary }; }
+  const mailPersistenceDurationMs = Date.now() - mailPersistenceStartedAt;
+  const extractionPersistenceStartedAt = Date.now();
   if (options.classifier) {
     for (const item of batch.items) {
       if (!item.success) continue;
@@ -88,10 +111,12 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
       catch { persistence.dbSaveFailureCount += 1; try { await recordAiProcessingFailure(prisma, item.messageId, "db", "AI抽出結果の保存に失敗しました"); } catch { /* 既存の保存失敗を隠さない */ } }
     }
   }
+  const extractionPersistenceDurationMs = Date.now() - extractionPersistenceStartedAt;
   const safelyHandled = persistence.persistedProcessingCount + persistence.skippedProcessedCount + aiSkippedSucceeded + aiSkippedPermanent + aiSkippedTemporary;
   const safeHandoff = persistence.dbSaveFailureCount === 0 && safelyHandled === emails.length;
-  if (!safeHandoff) return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary };
-  if (options.subjectPrefix) return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary };
-  try { await client.commitDeltaLink(mailboxId, delta.deltaLink); return { batch, persistence, deltaLinkSaved: true, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary }; }
-  catch { return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary }; }
+  const metrics = { deltaStartedAt, deltaEndedAt, deltaDurationMs: deltaEndedAt.getTime() - deltaStartedAt.getTime(), pagesFetched: delta.pagesFetched, deltaMessageCount: delta.changes.length, mailPersistenceDurationMs, extractionPersistenceDurationMs, aiTimings };
+  if (!safeHandoff) return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary, metrics };
+  if (options.subjectPrefix) return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary, metrics };
+  try { await client.commitDeltaLink(mailboxId, delta.deltaLink); return { batch, persistence, deltaLinkSaved: true, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary, metrics }; }
+  catch { return { batch, persistence, deltaLinkSaved: false, safeHandoff, aiSkippedSucceeded, aiSkippedPermanent, aiSkippedTemporary, metrics }; }
 }

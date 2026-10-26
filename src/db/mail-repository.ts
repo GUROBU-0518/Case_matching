@@ -116,6 +116,13 @@ export async function recordAiProcessingFailure(prisma: PrismaClient, mailMessag
   await prisma.aiProcessing.update({ where: { mailMessageId }, data: { status: "failed", aiStatus: errorType === "temporary" ? "failed_temporary" : "failed_permanent", errorType, errorMessage, zodValidationStatus: "failed", endedAt: new Date() } });
 }
 
+/** Stores a recovered preprocessed body without changing AI state. */
+export async function saveProcessedBodyIfMissing(prisma: PrismaClient, mailMessageId: string, processedBody: string): Promise<boolean> {
+  if (!processedBody.trim()) return false;
+  const result = await prisma.mailMessage.updateMany({ where: { id: mailMessageId, processedBody: null }, data: { processedBody } });
+  return result.count === 1;
+}
+
 export async function persistAiExtraction(prisma: PrismaClient, mailMessageId: string, response: AiResponse, sourceText: string): Promise<PersistAiExtractionResult> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.aiProcessing.findUnique({ where: { mailMessageId } });
