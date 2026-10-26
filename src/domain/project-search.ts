@@ -2,6 +2,11 @@ import type { Project } from "./schemas.ts";
 
 export type ProjectSearchRecord = Project & { readonly id: string };
 
+/** 金額フィルタを明示的に適用する場合だけ使う。NULLは一致扱いにしない。 */
+export function matchesProjectTalentPrice(project: ProjectSearchRecord, talent: import("./schemas.ts").Talent & { readonly id: string }): boolean {
+  return project.unitPriceMax != null && talent.desiredPriceMin != null && talent.desiredPriceMin <= project.unitPriceMax;
+}
+
 function normalizeText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("ja-JP").replace(/\s+/gu, " ").trim();
 }

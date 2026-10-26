@@ -7,6 +7,8 @@ export const aiProjectSchema = z.object({
   projectName: nullableText,
   summary: nullableText,
   price: nullableText,
+  priceMin: z.number().int().nonnegative().nullable().optional(),
+  priceMax: z.number().int().nonnegative().nullable().optional(),
   location: nullableText,
   nearestStation: nullableText,
   workStyle: nullableText,
@@ -21,6 +23,8 @@ export const aiProjectSchema = z.object({
 export const aiTalentSchema = z.object({
   name: nullableText,
   desiredPrice: nullableText,
+  desiredPriceMin: z.number().int().nonnegative().nullable().optional(),
+  desiredPriceMax: z.number().int().nonnegative().nullable().optional(),
   nearestStation: nullableText,
   skills: nullableTextList,
   availableFrom: nullableText,
@@ -47,6 +51,8 @@ export const aiResponseSchema = baseAiResponseSchema.superRefine((value, context
       : value.classification === "mixed" ? projects > 0 && talents > 0
         : projects === 0 && talents === 0;
   if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, path: ["classification"], message: "classificationとprojects/talentsの件数が一致しません" });
+  value.projects.forEach((project, index) => { if (project.priceMin != null && project.priceMax != null && project.priceMin > project.priceMax) context.addIssue({ code: z.ZodIssueCode.custom, path: ["projects", index, "priceMin"], message: "最低単価が最高単価を超えています" }); });
+  value.talents.forEach((talent, index) => { if (talent.desiredPriceMin != null && talent.desiredPriceMax != null && talent.desiredPriceMin > talent.desiredPriceMax) context.addIssue({ code: z.ZodIssueCode.custom, path: ["talents", index, "desiredPriceMin"], message: "最低希望単価が最高希望単価を超えています" }); });
 });
 
 export type AiProject = z.infer<typeof aiProjectSchema>;

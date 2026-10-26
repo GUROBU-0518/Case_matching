@@ -4,7 +4,7 @@ import type { Project, Talent } from "../domain/schemas.ts";
 import { projectSchema, talentSchema } from "../domain/schemas.ts";
 import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../domain/talent-filter.ts";
 import { matchesTalentSearch } from "../domain/talent-search.ts";
-import { matchesProjectSearch } from "../domain/project-search.ts";
+import { matchesProjectSearch, matchesProjectTalentPrice } from "../domain/project-search.ts";
 
 const defaultPort = 3000;
 
@@ -14,6 +14,8 @@ interface ProjectListItem {
   readonly summary: string;
   readonly location: string;
   readonly rate: string;
+  readonly unitPriceMin?: number | null;
+  readonly unitPriceMax?: number | null;
   readonly startDate: string;
   readonly requiredSkills: readonly string[];
 }
@@ -1185,19 +1187,40 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
 }
 
 function projectSummary(project: ApiProject): ProjectListItem {
+  const rate = formatProjectRate(project);
   return {
     id: project.id,
     name: project.projectName ?? "案件名未設定",
     summary: project.summary ?? "概要未設定",
     location: project.location ?? "勤務地未設定",
-    rate: project.rate ?? "単価未設定",
+    rate,
+    unitPriceMin: project.unitPriceMin ?? null,
+    unitPriceMax: project.unitPriceMax ?? null,
     startDate: project.startDate ?? "開始時期未設定",
     requiredSkills: project.requiredSkills ?? []
   };
 }
 
+function formatProjectRate(project: ApiProject): string {
+  return project.unitPriceMin != null && project.unitPriceMax != null
+    ? `${project.unitPriceMin}～${project.unitPriceMax}万円`
+    : project.unitPriceMin != null
+      ? `${project.unitPriceMin}万円以上`
+      : project.unitPriceMax != null
+        ? `～${project.unitPriceMax}万円`
+        : project.rate ?? "単価不明";
+}
+
+function formatTalentRate(talent: Talent): string {
+  if (talent.desiredPriceMin != null && talent.desiredPriceMax != null) return `${talent.desiredPriceMin}～${talent.desiredPriceMax}万円`;
+  if (talent.desiredPriceMin != null) return `${talent.desiredPriceMin}万円以上`;
+  if (talent.desiredPriceMax != null) return `～${talent.desiredPriceMax}万円`;
+  return talent.desiredRate ?? "単価不明";
+}
+
 function talentResponse(record: { id: string } & Record<string, unknown>): ApiTalent {
-  return { id: record.id, ...talentSchema.parse(record) };
+  const talent = talentSchema.parse(record);
+  return { id: record.id, ...talent, desiredRate: formatTalentRate(talent) };
 }
 
 function renderTalentsPage(initialState: { period?: string | undefined; query?: string | undefined; page?: number | undefined } = {}): string {
@@ -1398,7 +1421,7 @@ async function handleProjectByIdApi(id: string, url: URL, response: ServerRespon
     return;
   }
 
-  sendJson(response, 200, { project });
+  sendJson(response, 200, { project: { ...project, rate: formatProjectRate(project) } });
 }
 
 async function handleTalentsApi(url: URL, response: ServerResponse): Promise<void> {
@@ -1457,6 +1480,15 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     return;
   }
 
+  if (url.searchParams.get("priceFilter") === "1") {
+    const projectRecord = await getPrismaClient().project.findUnique({ where: { id: projectId } });
+    if (!projectRecord) {
+      sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+      return;
+    }
+    const project = { id: projectRecord.id, ...projectSchema.parse(projectRecord) };
+    records = records.filter((record) => matchesProjectTalentPrice(project, talentResponse(record)));
+  }
   const pageRecords = records.slice(offset, offset + requestedLimit);
   const talents = pageRecords.map((record) => talentResponse(record));
   const nextOffset = offset + talents.length;

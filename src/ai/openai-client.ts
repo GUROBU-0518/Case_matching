@@ -27,13 +27,13 @@ const nullableString = { anyOf: [{ type: "string" }, { type: "null" }] } as cons
 const nullableStringArray = { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] } as const;
 const aiProjectJsonSchema = {
   type: "object", additionalProperties: false,
-  properties: { projectName: nullableString, summary: nullableString, price: nullableString, location: nullableString, nearestStation: nullableString, workStyle: nullableString, startDate: nullableString, requiredSkills: nullableStringArray, preferredSkills: nullableStringArray, headcount: nullableString, phase: nullableString, commercialFlowRestriction: nullableString },
-  required: ["projectName", "summary", "price", "location", "nearestStation", "workStyle", "startDate", "requiredSkills", "preferredSkills", "headcount", "phase", "commercialFlowRestriction"],
+  properties: { projectName: nullableString, summary: nullableString, price: nullableString, priceMin: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] }, priceMax: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] }, location: nullableString, nearestStation: nullableString, workStyle: nullableString, startDate: nullableString, requiredSkills: nullableStringArray, preferredSkills: nullableStringArray, headcount: nullableString, phase: nullableString, commercialFlowRestriction: nullableString },
+  required: ["projectName", "summary", "price", "priceMin", "priceMax", "location", "nearestStation", "workStyle", "startDate", "requiredSkills", "preferredSkills", "headcount", "phase", "commercialFlowRestriction"],
 } as const;
 const aiTalentJsonSchema = {
   type: "object", additionalProperties: false,
-  properties: { name: nullableString, desiredPrice: nullableString, nearestStation: nullableString, skills: nullableStringArray, availableFrom: nullableString, availablePeriod: nullableString, age: nullableString, yearsOfExperience: nullableString, desiredWorkStyle: nullableString, availablePhases: nullableStringArray, affiliationType: { type: "string", enum: ["employee", "freelance", "unknown"] }, notes: nullableString },
-  required: ["name", "desiredPrice", "nearestStation", "skills", "availableFrom", "availablePeriod", "age", "yearsOfExperience", "desiredWorkStyle", "availablePhases", "affiliationType", "notes"],
+  properties: { name: nullableString, desiredPrice: nullableString, desiredPriceMin: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] }, desiredPriceMax: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] }, nearestStation: nullableString, skills: nullableStringArray, availableFrom: nullableString, availablePeriod: nullableString, age: nullableString, yearsOfExperience: nullableString, desiredWorkStyle: nullableString, availablePhases: nullableStringArray, affiliationType: { type: "string", enum: ["employee", "freelance", "unknown"] }, notes: nullableString },
+  required: ["name", "desiredPrice", "desiredPriceMin", "desiredPriceMax", "nearestStation", "skills", "availableFrom", "availablePeriod", "age", "yearsOfExperience", "desiredWorkStyle", "availablePhases", "affiliationType", "notes"],
 } as const;
 export const aiResponseJsonSchema = {
   type: "object", additionalProperties: false,
