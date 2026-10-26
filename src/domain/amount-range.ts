@@ -3,6 +3,13 @@ export type AmountRange = {
   readonly maxYen: number | null;
 };
 
+/** Converts integer 万円/月 values to the legacy BigInt yen/month columns without rounding. */
+export function manYenToYenBigInt(value: number | null | undefined): bigint | null {
+  if (value == null) return null;
+  if (!Number.isSafeInteger(value) || value < 0) throw new RangeError("単価は安全な非負整数万円である必要があります");
+  return BigInt(value) * 10_000n;
+}
+
 const EMPTY_RANGE: AmountRange = { minYen: null, maxYen: null };
 
 function invalidRange(): AmountRange {
