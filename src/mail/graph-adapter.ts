@@ -15,7 +15,7 @@ export function parseGraphMailMessage(input: unknown, mailboxId: string): GraphM
   if (!parsed.from?.emailAddress?.address) throw new Error(`Graphメールの送信者がありません: ${parsed.id}`);
   const email = commonEmailSchema.parse({
     mailboxId, messageId: parsed.id, subject: parsed.subject ?? "",
-    sender: parsed.from.emailAddress.address, receivedAt: new Date(parsed.receivedDateTime), body: parsed.body.content,
+    sender: parsed.from.emailAddress.address, receivedAt: new Date(parsed.receivedDateTime), body: parsed.body.content, contentType: parsed.body.contentType,
   });
   return { kind: "message", email, contentType: parsed.body.contentType };
 }

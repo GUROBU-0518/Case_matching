@@ -52,6 +52,31 @@ describe("preprocessMailBody", () => {
     expect(preprocessMailBody("").processedBody).toBe("");
     expect(preprocessMailBody("●●　￥ & < >").processedBody).toContain("●●　￥");
   });
+
+  it("日本語の返信履歴と転送ヘッダーを除去し本文を保持する", () => {
+    const result = preprocessMailBody("案件名：架空案件\n転送:\n差出人：旧担当\n送信日時：2026/01/01\n件名：旧件名\n旧本文");
+    expect(result.processedBody).toContain("案件名：架空案件");
+    expect(result.processedBody).not.toContain("旧本文");
+  });
+
+  it("単独の引用記号や重要な区切り線は削除しない", () => {
+    const result = preprocessMailBody("案件概要：A > B\n商流制限：一次請け限定\n-----\n勤務地：東京");
+    expect(result.processedBody).toContain("商流制限：一次請け限定");
+    expect(result.processedBody).toContain("勤務地：東京");
+  });
+
+  it("配信停止などの定型フッターを末尾から除去する", () => {
+    const result = preprocessMailBody("案件名：架空案件\n単価：70万円\n配信停止はこちら\nメールマガジンの購読解除");
+    expect(result.processedBody).toContain("単価：70万円");
+    expect(result.processedBody).not.toContain("購読解除");
+  });
+
+  it("HTMLの表と商流条件を保持する", () => {
+    const result = preprocessMailBody("<table><tr><td>案件名</td><td>在庫管理</td></tr><tr><td>単価</td><td>70万円</td></tr></table><p>商流制限：一次請け限定</p>", "html");
+    expect(result.processedBody).toContain("案件名");
+    expect(result.processedBody).toContain("70万円");
+    expect(result.processedBody).toContain("商流制限：一次請け限定");
+  });
 });
 
 

@@ -7,6 +7,7 @@ export const commonEmailSchema = z.object({
   sender: z.string().min(1).max(320),
   receivedAt: z.coerce.date(),
   body: z.string(),
+  contentType: z.enum(["text", "html"]).optional(),
 });
 
 export type CommonEmail = z.infer<typeof commonEmailSchema>;

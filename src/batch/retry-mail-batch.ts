@@ -61,7 +61,7 @@ export async function runRetryMailBatch(
     }
     const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
     const processor = options.classifier ? async (current: CommonEmail, preprocess: MailPreprocessor) => {
-      const processed = await preprocess(current.body);
+      const processed = await preprocess(current.body, current.contentType);
       try { if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false }); const response = await options.classifier!.classifyAndExtract({ subject: current.subject, processedBody: processed.processedBody }); aiResults.set(current.messageId, response); return processed; }
       catch (cause) {
         const ai = cause as { category?: string; status?: number; retryable?: boolean };

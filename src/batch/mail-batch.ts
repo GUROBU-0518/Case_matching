@@ -63,7 +63,7 @@ export interface MailBatchResult {
 }
 
 export type MailSource = () => Promise<CommonEmail[]>;
-export type MailPreprocessor = (body: string) => PreprocessedMailBody | Promise<PreprocessedMailBody>;
+export type MailPreprocessor = (body: string, contentType?: "text" | "html") => PreprocessedMailBody | Promise<PreprocessedMailBody>;
 export type MailProcessor = (email: CommonEmail, preprocess: MailPreprocessor) => Promise<PreprocessedMailBody>;
 export interface RetryOptions {
   maxAttempts?: number;
@@ -82,7 +82,7 @@ export async function processOneMail(email: CommonEmail, preprocess: MailPreproc
   while (attempts < maxAttempts) {
     attempts += 1;
     try {
-      const result = await (processor ? processor(email, preprocess) : preprocess(email.body));
+      const result = await (processor ? processor(email, preprocess) : preprocess(email.body, email.contentType));
       return {
         mailboxId: email.mailboxId, messageId: email.messageId, success: true, status: "succeeded",
         attempts, retryCount: attempts - 1, originalLength: result.originalBody.length,

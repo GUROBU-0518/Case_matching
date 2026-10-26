@@ -32,7 +32,7 @@ export async function runStoredAiPendingBatch(prisma: PrismaClient, classifier: 
       try {
         const result = await options.graphClient.fetchMessage(candidate.mailboxId, candidate.graphMessageId);
         if (result.kind !== "message") throw new Error("Graphメールを取得できません");
-        processedBody = preprocessMailBody(result.email.body).processedBody;
+        processedBody = preprocessMailBody(result.email.body, result.contentType).processedBody;
         if (!processedBody.trim() || !(await saveProcessedBodyIfMissing(prisma, candidate.id, processedBody))) throw new Error("前処理済み本文を保存できません");
         bodyRefetchSuccessCount += 1;
       } catch (error) {

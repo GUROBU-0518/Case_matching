@@ -19,7 +19,7 @@ export interface GraphMailBatchOptions { preprocess?: MailPreprocessor; concurre
 /** 1メールボックス単位でDelta取得結果を既存T04バッチへ接続する。 */
 export async function runGraphMailBatch(client: GraphDeltaClient, mailboxId: string, top = 3, options: GraphMailBatchOptions = {}): Promise<MailBatchResult> {
   const processor = options.classifier ? async (email: CommonEmail, preprocess: MailPreprocessor) => {
-    const processed = await preprocess(email.body);
+    const processed = await preprocess(email.body, email.contentType);
     try { await options.classifier!.classifyAndExtract({ subject: email.subject, processedBody: processed.processedBody }); return processed; }
     catch (error) {
       const ai = error as { category?: string; status?: number; retryable?: boolean };
@@ -76,7 +76,7 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
   const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
   const aiTimings: Array<{ number: number; durationMs: number; success: boolean }> = [];
   const processor = options.classifier ? async (email: CommonEmail, preprocess: MailPreprocessor) => {
-    const processed = await preprocess(email.body);
+    const processed = await preprocess(email.body, email.contentType);
     try {
       if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false });
       const aiStartedAt = Date.now();
