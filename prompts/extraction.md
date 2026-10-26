@@ -239,6 +239,18 @@
 
 構造化フィールド `desiredPriceMin` / `desiredPriceMax` には、万円/月へ正確に変換できる整数だけを入れてください。範囲は最小・最大、単一金額と以上は `desiredPriceMin`、以下は `desiredPriceMax` とします。応相談・不明・整数万円へ正確に変換できない円表記は両方 `null` とし、丸めや推測は禁止です。
 
+### 単価フィールドの厳密な対応表
+
+Structured Outputsで使用するJSONキーは、既存スキーマに合わせて次のcamelCaseを厳守してください（DBのsnake_case名へ直接出力してはいけません）。
+
+- 案件：`priceMin` / `priceMax`（DBでは `unit_price_min` / `unit_price_max`）
+- 人材：`desiredPriceMin` / `desiredPriceMax`（DBでは `desired_price_min` / `desired_price_max`）
+- 旧文字列：案件は`price`、人材は`desiredPrice`に原文の単価表現を保持する
+- 案件の「80万円」は`priceMin=null`、`priceMax=80`、人材の「80万円」は`desiredPriceMin=80`、`desiredPriceMax=null`
+- 「40～50万円」は該当するmin=40、max=50、「80万円以上」はmin=80、max=null、「80万円以下」はmin=null、max=80
+- 「応相談」「不明」「80万円程度」「91.5万円」は該当するmin/maxを両方nullにする
+- 不明な金額を推測せず、小数点を丸めず、1メール1回の応答で分類と抽出を完了する
+
 ### ③ 最寄り駅
 
 エンジニア本人の最寄り駅を抽出してください。
