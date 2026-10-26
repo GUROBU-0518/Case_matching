@@ -43,8 +43,25 @@ export interface ProjectsApiResponse {
   readonly projects: readonly Project[];
 }
 
+export interface StationDistanceMatch {
+  readonly status: "OK" | "UNKNOWN_WORKPLACE_STATION" | "UNKNOWN_PERSON_STATION";
+  readonly workplaceGroupCode: string | null;
+  readonly personGroupCode: string | null;
+  readonly workplaceDisplayName: string | null;
+  readonly personDisplayName: string | null;
+  readonly straightDistanceKm: number | null;
+  readonly distanceBand: "NEAR" | "MIDDLE" | "FAR" | "VERY_FAR" | null;
+  readonly method: "STRAIGHT_LINE" | null;
+}
+
+export type MatchTalent = Talent & {
+  readonly id: string;
+  readonly stationMatch: StationDistanceMatch | null;
+};
+
 export interface MatchesApiResponse {
-  readonly talents: readonly Talent[];
+  readonly talents: readonly MatchTalent[];
+  readonly totalCount: number;
   readonly nextCursor: string | null;
   readonly hasMore: boolean;
 }

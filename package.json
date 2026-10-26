@@ -5,16 +5,39 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
+    "start": "node --experimental-strip-types src/web/server.ts",
     "lint": "eslint .",
     "test": "vitest run --pool=threads --no-file-parallelism --maxWorkers=1 --minWorkers=1",
     "db:generate": "prisma generate",
-    "db:validate": "prisma validate"
+    "db:validate": "prisma validate",
+    "mail:mock": "node --experimental-strip-types src/mail/mock-cli.ts",
+    "mail:preprocess": "node --experimental-strip-types src/mail/preprocess-cli.ts",
+    "mail": "npm run mail:mock",
+    "batch": "node --experimental-strip-types src/db/mail-batch-cli.ts",
+    "batch:db": "node --experimental-strip-types src/db/mail-batch-cli.ts",
+    "batch:memory": "node --experimental-strip-types src/batch/mail-batch-cli.ts",
+    "db:migrate-price-ranges": "node --env-file-if-exists=.env --experimental-strip-types src/db/migrate-price-ranges-cli.ts",
+    "graph:fetch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-mail-cli.ts",
+    "graph:delta": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-delta-cli.ts",
+      "graph:batch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-batch-cli.ts",
+      "graph:diagnose": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-message-diagnostic-cli.ts",
+    "graph:register-exact": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-exact-register-cli.ts",
+    "graph:test": "node --env-file-if-exists=.env --experimental-strip-types src/mail/test-mail-batch-cli.ts"
+    ,"mail:preprocess-compare": "node --env-file-if-exists=.env --experimental-strip-types src/mail/preprocess-compare-cli.ts"
+    ,"mail:preprocess-update": "node --env-file-if-exists=.env --experimental-strip-types src/mail/preprocess-update-cli.ts"
+    ,"ai:manual": "node --env-file-if-exists=.env --experimental-strip-types src/ai/openai-manual-cli.ts",
+    "ai:stored": "node --env-file-if-exists=.env --experimental-strip-types src/ai/stored-mail-cli.ts"
+      ,"ai:stored-by-id": "node --env-file-if-exists=.env --experimental-strip-types src/ai/stored-mail-id-cli.ts"
+      ,"ai:restore-pending-single": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-single-cli.ts"
+      ,"ai:restore-failed-single": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-failed-cli.ts"
+      ,"ai:restore-pending": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-cli.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "openai": "^7.39.0",
     "prisma": "^6.19.3",
     "zod": "^3.25.76"
   },

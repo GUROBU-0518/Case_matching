@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
+    "allowImportingTsExtensions": true,
     "moduleResolution": "NodeNext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -9,8 +10,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals"],
-    "outDir": "dist"
+    "types": [
+      "node",
+      "vitest/globals"
+    ],
+    "outDir": "dist",
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests", "eslint.config.js"]
+  "include": [
+    "src",
+    "tests",
+    "eslint.config.js"
+  ]
 }
