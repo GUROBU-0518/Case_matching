@@ -15,6 +15,11 @@ export function isNearStationMatch(match: StationDistanceMatch | null): boolean 
     match.straightDistanceKm <= stationDistanceConfig.searchMaxDistanceKm;
 }
 
+/** UNKNOWNは候補に残し、既知のVERY_FARだけを候補から除外する。 */
+export function isAllowedStationMatch(match: StationDistanceMatch | null): boolean {
+  return !(match?.status === "OK" && match.distanceBand === "VERY_FAR");
+}
+
 export function sortByStationDistance<T>(records: readonly StationDistanceSortableRecord<T>[]): T[] {
   return [...records]
     .sort((left, right) => {

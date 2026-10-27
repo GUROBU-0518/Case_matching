@@ -1,6 +1,7 @@
 import type { StationDistanceMatch } from "../contracts/interfaces.ts";
 import type { Project, Talent } from "./schemas.ts";
 import { stationDistanceConfig } from "./station-distance-config.ts";
+import { isAllowedStationMatch } from "./station-match.ts";
 
 export const matchPolicy = {
   tagMatchMode: "OR",
@@ -93,11 +94,17 @@ export function matchesRateCondition(condition: RateCondition | undefined, talen
 }
 
 export function matchesProjectConditions(
-  project: Pick<Project, "requiredSkills" | "rate" | "location">,
-  talent: Talent,
+  project: Pick<Project, "requiredSkills" | "location"> & { readonly rateMin?: bigint | null; readonly rateMax?: bigint | null },
+  talent: Talent & { readonly desiredRateMin?: bigint | null; readonly desiredRateMax?: bigint | null },
   stationMatch: StationDistanceMatch | null
 ): boolean {
   void project.location;
-  void stationMatch;
-  return matchesRateCondition(parseRateCondition(project.rate), talent.desiredRate);
+  const hasProjectRate = project.rateMin != null && project.rateMax != null;
+  const hasTalentRate = talent.desiredRateMin != null && talent.desiredRateMax != null;
+  const validProjectRate = !hasProjectRate || project.rateMin! <= project.rateMax!;
+  const validTalentRate = !hasTalentRate || talent.desiredRateMin! <= talent.desiredRateMax!;
+  const rateMatches = !hasProjectRate || (hasTalentRate && validProjectRate && validTalentRate &&
+    talent.desiredRateMin! <= project.rateMax! && talent.desiredRateMax! >= project.rateMin!);
+
+  return isAllowedStationMatch(stationMatch) && rateMatches;
 }

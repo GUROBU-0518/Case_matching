@@ -3,7 +3,9 @@ import type { StationDistanceMatch } from "../src/contracts/interfaces.ts";
 import { hasMatchingProjectTag, matchesProjectConditions, matchesRateCondition, parseRateCondition, parseTalentRate } from "../src/domain/project-match-filter.ts";
 import type { Talent } from "../src/domain/schemas.ts";
 
-const talent = (overrides: Partial<Talent> = {}): Talent => ({
+type TestTalent = Talent & { desiredRateMin: bigint | null; desiredRateMax: bigint | null };
+
+const talent = (overrides: Partial<TestTalent> = {}): TestTalent => ({
   nameOrInitial: "サンプル",
   technicalSkills: ["Java"],
   desiredRate: "80万円",
@@ -13,12 +15,20 @@ const talent = (overrides: Partial<Talent> = {}): Talent => ({
   availableProcess: [],
   affiliation: "BP",
   sourceText: null,
+  desiredRateMin: 800000n,
+  desiredRateMax: 800000n,
   ...overrides
 });
 
 const near: StationDistanceMatch = {
   status: "OK", workplaceGroupCode: "w", personGroupCode: "p", workplaceDisplayName: "大森",
   personDisplayName: "大鳥居", straightDistanceKm: 10, distanceBand: "NEAR", method: "STRAIGHT_LINE"
+};
+
+const veryFar: StationDistanceMatch = {
+  ...near,
+  straightDistanceKm: 45,
+  distanceBand: "VERY_FAR"
 };
 
 describe("project match filters", () => {
@@ -44,10 +54,12 @@ describe("project match filters", () => {
   });
 
   it("keeps station and skill mismatches as candidates while enforcing rate", () => {
-    expect(matchesProjectConditions({ requiredSkills: ["Java"], location: "大森", rate: "80万円以下" }, talent(), near)).toBe(true);
-    expect(matchesProjectConditions({ requiredSkills: [], location: null, rate: null }, talent({ desiredRate: null }), null)).toBe(true);
-    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent(), near)).toBe(true);
-    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent({ desiredRate: "85万円" }), near)).toBe(false);
-    expect(matchesProjectConditions({ requiredSkills: ["Python"], location: "大森", rate: "80万円以下" }, talent({ nearestStation: null }), null)).toBe(true);
+    const project = { requiredSkills: ["Java"], location: "大森", rateMin: 700000n, rateMax: 850000n };
+    expect(matchesProjectConditions(project, talent(), near)).toBe(true);
+    expect(matchesProjectConditions({ requiredSkills: [], location: null }, talent({ desiredRate: null, desiredRateMin: null, desiredRateMax: null }), null)).toBe(true);
+    expect(matchesProjectConditions({ ...project, requiredSkills: ["Python"] }, talent(), near)).toBe(true);
+    expect(matchesProjectConditions(project, talent({ desiredRate: "53万円", desiredRateMin: 530000n, desiredRateMax: 530000n }), near)).toBe(false);
+    expect(matchesProjectConditions({ ...project, requiredSkills: ["Python"] }, talent({ nearestStation: null }), null)).toBe(true);
+    expect(matchesProjectConditions(project, talent(), veryFar)).toBe(false);
   });
 });

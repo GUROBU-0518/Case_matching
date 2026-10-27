@@ -29,7 +29,11 @@ interface ProjectListItem {
   readonly requiredSkills: readonly string[];
 }
 
-type ApiProject = Project & { readonly id: string };
+type ApiProject = Project & {
+  readonly id: string;
+  readonly rateMin?: bigint | null;
+  readonly rateMax?: bigint | null;
+};
 type ApiTalent = Talent & { readonly id: string };
 type ApiMatchTalent = ApiTalent & { readonly stationMatch: StationDistanceMatch | null };
 
@@ -557,10 +561,13 @@ function pageShell(title: string, body: string): string {
       display: grid;
       flex: 1 1 auto;
       gap: 5px;
+      align-content: start;
+      grid-auto-rows: max-content;
       margin-top: 10px;
       min-height: 0;
       max-height: none;
       overflow-y: auto;
+      overflow-x: hidden;
       padding-right: 6px;
       overscroll-behavior: contain;
     }
@@ -660,7 +667,11 @@ function pageShell(title: string, body: string): string {
       color: var(--muted);
       font-size: 12px;
       line-height: 1.2;
-      white-space: nowrap;
+      white-space: normal;
+    }
+
+    .talent-list-panel .talent-card p small {
+      display: block;
     }
 
     .talent-list-panel .talent-skills {
@@ -712,6 +723,30 @@ function pageShell(title: string, body: string): string {
     }
 
     @media (max-width: 720px) {
+      .matching-layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .talent-list-panel,
+      .talent-detail-panel {
+        height: min(60vh, 460px);
+      }
+
+      .talent-list-panel .talent-card {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .talent-list-panel .talent-card-meta {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 3px;
+      }
+
+      .talent-list-panel .talent-card p {
+        display: block;
+        margin-right: 0;
+      }
+
       .app-header,
       .toolbar,
       .project-card {
@@ -787,7 +822,6 @@ function renderProjectsPage(initialState: { query?: string | undefined; page?: n
         <button class="button" type="submit">検索</button>
         <button class="button" type="button" id="project-search-clear">クリア</button>
       </form>
-      <p class="notice">認証、実DB接続、マッチング画面への移動は今回の対象外です。</p>
       <div id="projects-root" class="project-grid">
         <div class="state-box" role="status" aria-live="polite">
           <div>
@@ -912,6 +946,13 @@ function displayValue(value: string | number | null): string {
   return value === null ? "未設定" : String(value);
 }
 
+function displayPriceRange(min: number | null | undefined, max: number | null | undefined): string {
+  if (min == null && max == null) return "未設定";
+  const format = (value: number | null | undefined): string => value === null || value === undefined ? "未設定" : `${value.toLocaleString("ja-JP")}円`;
+  if (min != null && max != null && min === max) return format(min);
+  return `${format(min)}〜${format(max)}`;
+}
+
 function renderProjectMatchesPage(project: ApiProject | undefined, id: string): string {
   if (!project) {
     return pageShell("案件が見つかりません", `
@@ -935,7 +976,7 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
       <p class="lead">${project.summary ?? "概要未設定"}</p>
       <dl class="detail-grid">
         <div class="detail-item"><dt>勤務地</dt><dd>${displayValue(project.location)}</dd></div>
-        <div class="detail-item"><dt>単価</dt><dd>${displayValue(project.rate)}</dd></div>
+        <div class="detail-item"><dt>単価</dt><dd>${displayPriceRange(project.unitPriceMin, project.unitPriceMax)}</dd></div>
         <div class="detail-item"><dt>勤務形態</dt><dd>${displayValue(project.workStyle)}</dd></div>
         <div class="detail-item"><dt>開始時期</dt><dd>${displayValue(project.startDate)}</dd></div>
         <div class="detail-item"><dt>募集人数</dt><dd>${displayValue(project.headcount)}</dd></div>
@@ -948,10 +989,6 @@ function renderProjectMatchesPage(project: ApiProject | undefined, id: string): 
       <section class="detail-section">
         <h2>必須スキル</h2>
         <div class="skills" aria-label="必須スキル">${skillMarkup}</div>
-      </section>
-      <section class="detail-section">
-        <h2>マッチング結果</h2>
-        <p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p>
       </section>
       <div class="matching-layout">
         <section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading">
@@ -1004,6 +1041,11 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
       const display = (item) => item === null || item === undefined || item === ""
         ? "未設定"
         : escapeHtml(item);
+      const displayPriceRange = (min, max) => {
+        if (min == null && max == null) return "未設定";
+        const format = (value) => value === null || value === undefined ? "未設定" : Number(value).toLocaleString("ja-JP") + "円";
+        return min !== null && max !== null && Number(min) === Number(max) ? format(min) : format(min) + "〜" + format(max);
+      };
 
       function stationMatchDisplay(match) {
         if (!match) return "駅距離: 判定対象外";
@@ -1045,7 +1087,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
                   : 'スキル未設定') +
               '</div></div>' +
             '<div class="talent-card-meta">' +
-              '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
+              '<p>希望単価: ' + displayPriceRange(talent.desiredPriceMin, talent.desiredPriceMax) + '</p>' +
               '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
               '<p>' + stationMatchDisplay(talent.stationMatch) + '</p>' +
             '</div>' +
@@ -1148,6 +1190,11 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           ? skills.map((skill) => '<span class="skill">' + escapeHtml(skill) + "</span>").join("")
           : "<span>未設定</span>";
         const value = (item) => item === null || item === undefined ? "未設定" : item;
+        const displayPriceRange = (min, max) => {
+          if (min == null && max == null) return "未設定";
+          const format = (item) => item === null || item === undefined ? "未設定" : Number(item).toLocaleString("ja-JP") + "円";
+          return min !== null && max !== null && Number(min) === Number(max) ? format(min) : format(min) + "〜" + format(max);
+        };
 
         matchingRoot.innerHTML =
           '<p><a class="back-link" href="/projects?${escapeHtml(returnQuery)}">← 案件一覧へ戻る</a></p>' +
@@ -1155,7 +1202,7 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
           '<p class="lead">' + escapeHtml(value(project.summary) || "概要未設定") + "</p>" +
           '<dl class="detail-grid">' +
             '<div class="detail-item"><dt>勤務地</dt><dd>' + escapeHtml(value(project.location)) + "</dd></div>" +
-            '<div class="detail-item"><dt>単価</dt><dd>' + escapeHtml(value(project.rate)) + "</dd></div>" +
+            '<div class="detail-item"><dt>単価</dt><dd>' + escapeHtml(displayPriceRange(project.unitPriceMin, project.unitPriceMax)) + "</dd></div>" +
             '<div class="detail-item"><dt>勤務形態</dt><dd>' + escapeHtml(value(project.workStyle)) + "</dd></div>" +
             '<div class="detail-item"><dt>開始時期</dt><dd>' + escapeHtml(value(project.startDate)) + "</dd></div>" +
             '<div class="detail-item"><dt>募集人数</dt><dd>' + escapeHtml(value(project.headcount)) + "</dd></div>" +
@@ -1167,7 +1214,6 @@ function renderProjectMatchesClientPage(id: string, returnState: { query?: strin
               : escapeHtml(project.sourceText)) +
           "</p></div></section>" +
           '<section class="detail-section"><h2>必須スキル</h2><div class="skills" aria-label="必須スキル">' + skillMarkup + "</div></section>" +
-          '<section class="detail-section"><h2>マッチング結果</h2><p class="notice">マッチング結果は未実装です。今回は選択した案件情報の表示までを確認できます。</p></section>' +
           '<div class="matching-layout">' +
             '<section class="matching-panel talent-list-panel" aria-labelledby="talent-list-heading"><h2 id="talent-list-heading">人材一覧</h2><p>登録済みの人材情報を表示しています。</p><div id="talent-list-root">' + renderTalentList(pageTalents) + '</div></section>' +
             '<section class="matching-panel talent-detail-panel" aria-labelledby="talent-detail-heading"><h2 id="talent-detail-heading">人材詳細</h2><p>選択した人材の詳細を表示します。</p><div id="talent-detail-root" aria-live="polite">' + renderTalentDetail(null) + '</div></section>' +
@@ -1209,13 +1255,12 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
 }
 
 function projectSummary(project: ApiProject): ProjectListItem {
-  const rate = formatProjectRate(project);
   return {
     id: project.id,
     name: project.projectName ?? "案件名未設定",
     summary: project.summary ?? "概要未設定",
     location: project.location ?? "勤務地未設定",
-    rate,
+    rate: displayPriceRange(project.unitPriceMin, project.unitPriceMax),
     unitPriceMin: project.unitPriceMin ?? null,
     unitPriceMax: project.unitPriceMax ?? null,
     startDate: project.startDate ?? "開始時期未設定",
@@ -1384,6 +1429,11 @@ function renderTalentsPage(initialState: { period?: string | undefined; query?: 
     <script>
       const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      const displayPriceRange = (min, max) => {
+        if (min == null && max == null) return "未設定";
+        const format = (value) => value === null || value === undefined ? "未設定" : Number(value).toLocaleString("ja-JP") + "円";
+        return min !== null && max !== null && Number(min) === Number(max) ? format(min) : format(min) + "〜" + format(max);
+      };
       const displayName = (value) => typeof value !== "string" || value.trim() === "" ? "未設定" : escapeHtml(value);
       const pageSize = 10;
       let allTalents = [];
@@ -1404,7 +1454,7 @@ function renderTalentsPage(initialState: { period?: string | undefined; query?: 
               '<div><h2>' + displayName(talent.nameOrInitial) + '</h2>' +
                 '<p title="' + display((talent.technicalSkills || []).join("、")) + '">技術スキル: ' + display((talent.technicalSkills || []).join("、")) + '</p></div>' +
               '<div class="talent-card-meta">' +
-                '<p>希望単価: ' + display(talent.desiredRate) + '</p>' +
+                '<p>希望単価: ' + displayPriceRange(talent.desiredPriceMin, talent.desiredPriceMax) + '</p>' +
                 '<p>最寄り駅: ' + display(talent.nearestStation) + '</p>' +
                 '<p title="' + display((talent.availableProcess || []).join("、")) + '">経験工程: ' + display((talent.availableProcess || []).join("、")) + '</p>' +
               '</div>' +
@@ -1475,6 +1525,11 @@ function renderTalentDetailPage(id: string, returnState: { period?: string | und
     <script>
       const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       const display = (value) => value === null || value === undefined || value === "" ? "未設定" : escapeHtml(value);
+      const displayPriceRange = (min, max) => {
+        if (min == null && max == null) return "未設定";
+        const format = (value) => value === null || value === undefined ? "未設定" : Number(value).toLocaleString("ja-JP") + "円";
+        return min !== null && max !== null && Number(min) === Number(max) ? format(min) : format(min) + "〜" + format(max);
+      };
       const displayName = (value) => typeof value !== "string" || value.trim() === "" ? "未設定" : escapeHtml(value);
       const id = ${JSON.stringify(id)};
       fetch('/api/talents/' + encodeURIComponent(id)).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error?.message || 'talent'); return data; })
@@ -1483,7 +1538,7 @@ function renderTalentDetailPage(id: string, returnState: { period?: string | und
           '<dt>ID</dt><dd>' + display(talent.id) + '</dd>' +
           '<dt>技術スキル</dt><dd>' + display((talent.technicalSkills || []).join("、")) + '</dd>' +
           '<dt>経験工程・担当業務</dt><dd>' + display((talent.availableProcess || []).join("、")) + '</dd>' +
-          '<dt>希望単価</dt><dd>' + display(talent.desiredRate) + '</dd>' +
+          '<dt>希望単価</dt><dd>' + displayPriceRange(talent.desiredPriceMin, talent.desiredPriceMax) + '</dd>' +
           '<dt>最寄り駅</dt><dd>' + display(talent.nearestStation) + '</dd>' +
           '<dt>希望勤務条件</dt><dd>' + display(talent.desiredWorkStyle) + '</dd>' +
           '<dt>稼働開始時期</dt><dd>' + display(talent.availableFrom) + '</dd>' +
@@ -1603,11 +1658,18 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     return;
   }
 
-  let project: ApiProject | null = null;
+  let project: (ApiProject & { readonly rateMin: bigint | null; readonly rateMax: bigint | null }) | null = null;
   let records: Array<{ id: string; createdAt: Date } & Record<string, unknown>>;
   try {
     const projectRecord = await getPrismaClient().project.findUnique({ where: { id: projectId } });
-    project = projectRecord ? { id: projectRecord.id, ...projectSchema.parse(projectRecord) } : null;
+    project = projectRecord
+      ? {
+          id: projectRecord.id,
+          ...projectSchema.parse(projectRecord),
+          rateMin: projectRecord.rateMin,
+          rateMax: projectRecord.rateMax
+        }
+      : null;
     if (!project) {
       sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
       return;
@@ -1631,7 +1693,14 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     const recordMetadata = new Map(records.map((record) => [record.id, record]));
     const eligibleTalents = sortByStationDistance(
       matchedTalents
-        .filter((talent) => matchesProjectConditions(project!, talent, talent.stationMatch))
+        .filter((talent) => {
+          const record = recordMetadata.get(talent.id);
+          return matchesProjectConditions(project!, {
+            ...talent,
+            desiredRateMin: typeof record?.desiredRateMin === "bigint" ? record.desiredRateMin : null,
+            desiredRateMax: typeof record?.desiredRateMax === "bigint" ? record.desiredRateMax : null
+          }, talent.stationMatch);
+        })
         .map((talent) => {
           const record = recordMetadata.get(talent.id);
           return {
