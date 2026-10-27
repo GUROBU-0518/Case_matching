@@ -18,6 +18,8 @@ model Project {
   requiredSkills         String[]     @map("required_skills")
   preferredSkills        String[]     @default([]) @map("preferred_skills")
   rate                   String?
+  unitPriceMin           Int?         @map("unit_price_min")
+  unitPriceMax           Int?         @map("unit_price_max")
   rateMin                BigInt?      @map("rate_min")
   rateMax                BigInt?      @map("rate_max")
   location               String?
@@ -45,6 +47,8 @@ model Talent {
   // 情報なしはNULLではなく空配列で扱う
   technicalSkills   String[]     @map("technical_skills")
   desiredRate       String?      @map("desired_rate")
+  desiredPriceMin   Int?         @map("desired_price_min")
+  desiredPriceMax   Int?         @map("desired_price_max")
   desiredRateMin    BigInt?      @map("desired_rate_min")
   desiredRateMax    BigInt?      @map("desired_rate_max")
   nearestStation    String?      @map("nearest_station")
