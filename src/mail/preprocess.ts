@@ -44,17 +44,48 @@ function normalizeText(value: string): string {
 
 function removeQuotedReply(value: string): { text: string; removed: boolean } {
   const lines = value.split("\n");
-  const index = lines.findIndex((line) => /^(On .+wrote:|-----Original Message-----|From:.+\n?Sent:)/i.test(line.trim()) || /^>+\s?/.test(line.trim()));
-  return index === -1 ? { text: value, removed: false } : { text: lines.slice(0, index).join("\n").trimEnd(), removed: true };
+  let current = lines;
+  let removed = false;
+  for (;;) {
+    const index = current.findIndex((line, i) => {
+      const text = line.trim();
+      const next = current[i + 1]?.trim() ?? "";
+      return /^(On .+wrote:|-----Original Message-----|From:\s*.+|差出人[:：]|送信日時[:：]|件名[:：].*(?:Re:|返信|転送))/i.test(text)
+        || /^(202\d[\u002f.-].*(?: wrote:|さんは書きました))/i.test(text)
+        || (/^>+\s?/.test(text) && current.slice(i).filter((line) => /^>+\s?/.test(line.trim())).length >= 2)
+        || (/^-{5,}$/.test(text) && /^(From|差出人|送信日時|件名)[:：]/i.test(next));
+    });
+    if (index === -1) break;
+    current = current.slice(0, index).join("\n").trimEnd().split("\n");
+    removed = true;
+  }
+  return { text: current.join("\n").trimEnd(), removed };
 }
 
 function removeSignature(value: string): { text: string; removed: boolean } {
   const lines = value.split("\n");
-  const separator = lines.findIndex((line, index) => index >= Math.floor(lines.length / 2) && /^(--\s*$|□■|_{5,}|-{5,})/.test(line.trim()));
-  if (separator === -1) return { text: value, removed: false };
-  const tail = lines.slice(separator).join("\n");
-  const hasContact = /(?:TEL|FAX|MAIL|電話|メール|〒|@)/i.test(tail);
-  return hasContact ? { text: lines.slice(0, separator).join("\n").trimEnd(), removed: true } : { text: value, removed: false };
+  const start = Math.max(1, lines.length - 8);
+  for (let i = start; i < lines.length; i += 1) {
+    const tail = lines.slice(i).join("\n");
+    const contactSignals = [/(?:TEL|FAX|電話|〒)/i, /[\w.+-]+@[\w.-]+\.[A-Z]{2,}/i, /https?:\/\//i, /(?:株式会社|有限会社|合同会社)/, /(?:担当|営業|部|課|氏名)[:：]/].filter((pattern) => pattern.test(tail)).length;
+    const hasSeparator = /^(--\s*$|□■|_{5,}|-{5,})/.test(lines[i]!.trim());
+    const hasSignatureLabel = /^(署名|敬具|以上|よろしくお願いいたします)[。．!！]?$/i.test(lines[i]!.trim());
+    if ((hasSeparator || hasSignatureLabel) && contactSignals >= 1) return { text: lines.slice(0, i).join("\n").trimEnd(), removed: true };
+    if (!hasSeparator && contactSignals >= 2 && lines.slice(i).filter((line) => line.trim()).length >= 2) return { text: lines.slice(0, i).join("\n").trimEnd(), removed: true };
+  }
+  return { text: value, removed: false };
+}
+
+function removeBoilerplateFooter(value: string): string {
+  const lines = value.split("\n");
+  const start = Math.max(0, lines.length - 8);
+  for (let i = start; i < lines.length; i += 1) {
+    const tail = lines.slice(i).join("\n");
+    const signals = [/(?:配信停止|購読解除|unsubscribe|メールマガジン)/i, /(?:広告|宣伝|キャンペーン|サービスのご案内)/i, /(?:自動配信|自動送信|このメールは.*返信)/i, /(?:免責事項|confidential|©)/i].filter((pattern) => pattern.test(lines[i]!.trim())).length;
+    const followingSignals = [/(?:配信停止|購読解除|unsubscribe|メールマガジン)/i, /(?:広告|宣伝|キャンペーン|サービスのご案内)/i, /(?:自動配信|自動送信|このメールは.*返信)/i, /(?:免責事項|confidential|©)/i].filter((pattern) => pattern.test(tail)).length;
+    if (signals >= 1 && (followingSignals >= 2 || (i >= lines.length - 3 && /(?:配信停止|購読解除|unsubscribe|免責事項)/i.test(tail)))) return lines.slice(0, i).join("\n").trimEnd();
+  }
+  return value;
 }
 
 const openingGreetings = new Set(["お世話になっております。", "いつもお世話になっております。", "お疲れ様です。", "平素よりお世話になっております。"]);
@@ -74,5 +105,5 @@ export function preprocessMailBody(body: string, contentType: MailContentType = 
   const quoted = removeQuotedReply(normalized);
   const signature = removeSignature(quoted.text);
   const withoutGreetings = removeGreetingLines(signature.text);
-  return { originalBody, processedBody: normalizeText(withoutGreetings), signatureRemoved: signature.removed, quotedReplyRemoved: quoted.removed };
+  return { originalBody, processedBody: normalizeText(removeBoilerplateFooter(withoutGreetings)), signatureRemoved: signature.removed, quotedReplyRemoved: quoted.removed };
 }

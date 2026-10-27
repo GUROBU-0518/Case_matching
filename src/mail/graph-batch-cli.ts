@@ -14,7 +14,7 @@ try {
     process.exitCode = 1;
     process.exit();
   }
-  const [{ parseGraphConfig }, { GraphTokenProvider }, { GraphDeltaClient }, { GraphMailClient }, { PrismaDeltaLinkStore }, { getPrismaClient }, { runGraphMailBatchWithPersistence }, { runRetryMailBatch }, { AiUsageBudget }, { runStoredAiPendingBatch }, aiModule] = await Promise.all([
+  const [{ parseGraphConfig }, { GraphTokenProvider }, { GraphDeltaClient }, { GraphMailClient }, { PrismaDeltaLinkStore }, { getPrismaClient }, { runGraphMailBatchWithPersistence }, { runRetryMailBatch }, { AiUsageBudget, parseAiMaxCalls }, { runStoredAiPendingBatch }, aiModule] = await Promise.all([
     import("./graph-config.ts"), import("./graph-auth.ts"), import("./graph-delta.ts"), import("./graph-client.ts"), import("../db/delta-link-store.ts"), import("../db/client.ts"), import("../batch/graph-mail-batch.ts"), import("../batch/retry-mail-batch.ts"), import("../ai/usage-budget.ts"), import("../batch/stored-ai-batch.ts"), args.includes("--ai") ? import("../ai/openai-client.ts") : Promise.resolve(undefined),
   ]);
   const required = ["GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_CLIENT_SECRET", "GRAPH_MAILBOXES"] as const;
@@ -29,7 +29,7 @@ try {
   const subjectPrefix = subjectPrefixArg?.slice("--subject-prefix=".length);
   if (subjectPrefixArg && !subjectPrefix?.trim()) { throw new Error("--subject-prefixは空にできません"); }
   const classifier = aiModule ? new aiModule.OpenAiClassifier() : undefined;
-  const aiBudget = classifier ? new AiUsageBudget(Number(process.env.AI_MAX_CALLS ?? 10)) : undefined;
+  const aiBudget = classifier ? new AiUsageBudget(parseAiMaxCalls(process.env.AI_MAX_CALLS)) : undefined;
   const client = getPrismaClient(); prisma = client;
   const store = new PrismaDeltaLinkStore(client);
   const tokenProvider = new GraphTokenProvider(config);
@@ -60,7 +60,10 @@ try {
       console.log(`AI処理対象件数: ${result.batch.totalCount}`);
       console.log(`AI成功件数: ${args.includes("--ai") ? result.batch.successCount : 0}`);
       console.log(`AI失敗件数: ${args.includes("--ai") ? result.batch.failureCount : 0}`);
-      console.log(`AI API試行回数: ${aiBudget?.count ?? 0}/${aiBudget?.limit ?? 0}`);
+      for (const [index, item] of result.batch.items.entries()) {
+        if (!item.success && item.diagnostic) console.log(`失敗診断 #${index + 1}: ${JSON.stringify(item.diagnostic)}`);
+      }
+      console.log(`AI API試行回数: ${aiBudget ? `${aiBudget.count}/${Number.isFinite(aiBudget.limit) ? aiBudget.limit : "無制限"}` : "0/0"}`);
       if (stored) { console.log(`DB未処理回収件数: ${stored.totalCount}`); console.log(`本文再取得対象件数: ${stored.bodyRefetchCandidates}`); console.log(`本文再取得成功件数: ${stored.bodyRefetchSuccessCount}`); console.log(`本文再取得失敗件数: ${stored.bodyRefetchFailureCount}`); console.log(`DB未処理AI成功件数: ${stored.successCount}`); console.log(`DB未処理AI失敗件数: ${stored.failureCount}`); console.log(`AI上限繰越件数: ${stored.deferredCount}`); }
       console.log(`既存成功済みスキップ件数: ${result.aiSkippedSucceeded}`);
       console.log(`恒久失敗スキップ件数: ${result.aiSkippedPermanent}`);
@@ -84,8 +87,11 @@ try {
       console.error(`メールボックス処理: 失敗（${mailboxId}）`);
       console.error(`失敗段階: ${stage}`);
       if (error && typeof error === "object" && "category" in error) {
-        const diagnostic = error as { category?: unknown; status?: unknown; retryable?: unknown };
+        const diagnostic = error as { category?: unknown; status?: unknown; retryable?: unknown; stage?: unknown; diagnosticCode?: unknown; fields?: unknown };
         console.error(`エラー種別: ${typeof diagnostic.category === "string" ? diagnostic.category : "unknown"}`);
+        if (typeof diagnostic.stage === "string") console.error(`失敗段階: ${diagnostic.stage}`);
+        if (typeof diagnostic.diagnosticCode === "string") console.error(`診断コード: ${diagnostic.diagnosticCode}`);
+        if (Array.isArray(diagnostic.fields)) console.error(`問題フィールド: ${diagnostic.fields.filter((field): field is string => typeof field === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,119}$/.test(field)).slice(0, 50).join(",") || "なし"}`);
         if (typeof diagnostic.status === "number") console.error(`HTTPステータス: ${diagnostic.status}`);
         if (typeof diagnostic.retryable === "boolean") console.error(`再試行可能: ${diagnostic.retryable ? "はい" : "いいえ"}`);
       } else {

@@ -6,7 +6,7 @@ import { GraphMailClient } from "./graph-client.ts";
 import { getPrismaClient } from "../db/client.ts";
 import { preprocessMailBody } from "./preprocess.ts";
 import { OpenAiClassifier } from "../ai/openai-client.ts";
-import { AiUsageBudget } from "../ai/usage-budget.ts";
+import { AiUsageBudget, parseAiMaxCalls } from "../ai/usage-budget.ts";
 import { persistAiExtraction, persistMailResult, recordAiProcessingFailure } from "../db/mail-repository.ts";
 import type { MailItemResult } from "../batch/mail-batch.ts";
 
@@ -28,7 +28,7 @@ if (!config.mailboxes.includes(mailboxId)) throw new Error("対象メールボ�
 const graph = new GraphMailClient(config, new GraphTokenProvider(config));
 const prisma = getPrismaClient();
 const classifier = new OpenAiClassifier({ maxRetries: 0 });
-const budget = new AiUsageBudget(Number(process.env.AI_MAX_CALLS ?? 10));
+const budget = new AiUsageBudget(parseAiMaxCalls(process.env.AI_MAX_CALLS));
 const batchStartedAt = Date.now();
 const emails = [];
 for (const target of targets) {

@@ -1,9 +1,11 @@
 import type { CommonEmail } from "../mail/types.ts";
 import type { GraphDeltaClient, DeltaResult } from "../mail/graph-delta.ts";
-import { runMailBatch, MailProcessingError, type MailBatchResult, type MailPreprocessor, type RetryOptions } from "./mail-batch.ts";
+import { runMailBatch, MailProcessingError, wrapAiFailure, type MailBatchResult, type MailPreprocessor, type RetryOptions } from "./mail-batch.ts";
 import type { PrismaClient } from "@prisma/client";
 import { persistMailBatch, persistAiExtractionForEmail, recordAiProcessingFailure, type PersistBatchSummary } from "../db/mail-repository.ts";
 import type { OpenAiClassifier } from "../ai/openai-client.ts";
+import type { PreprocessedMailBody } from "../mail/preprocess.ts";
+import { formatSafeAiFailureDiagnostic } from "../ai/failure-diagnostic.ts";
 import type { AiUsageBudget } from "../ai/usage-budget.ts";
 
 export type DeltaSource = () => Promise<DeltaResult>;
@@ -19,14 +21,11 @@ export interface GraphMailBatchOptions { preprocess?: MailPreprocessor; concurre
 /** 1メールボックス単位でDelta取得結果を既存T04バッチへ接続する。 */
 export async function runGraphMailBatch(client: GraphDeltaClient, mailboxId: string, top = 3, options: GraphMailBatchOptions = {}): Promise<MailBatchResult> {
   const processor = options.classifier ? async (email: CommonEmail, preprocess: MailPreprocessor) => {
-    const processed = await preprocess(email.body);
+    let processed: PreprocessedMailBody;
+    try { processed = await preprocess(email.body, email.contentType); }
+    catch (error) { throw wrapAiFailure(error, "preprocessing"); }
     try { await options.classifier!.classifyAndExtract({ subject: email.subject, processedBody: processed.processedBody }); return processed; }
-    catch (error) {
-      const ai = error as { category?: string; status?: number; retryable?: boolean };
-      const category = ai.category === "rate_limit" || ai.category === "timeout" || ai.category === "temporary" ? "temporary" : ai.category === "authentication" || ai.category === "validation" ? "permanent" : "unknown";
-      const code = typeof ai.status === "number" ? `HTTP_${ai.status}` : ai.category;
-      throw new MailProcessingError("AI処理に失敗しました", { category, ...(code ? { code } : {}), retryable: ai.retryable === true && category === "temporary" });
-    }
+    catch (error) { throw wrapAiFailure(error, "openai_request"); }
   } : undefined;
   return runMailBatch(() => loadNewGraphEmails(() => client.fetchDelta(mailboxId, top)), options.preprocess, options.concurrency ?? 3, options.retry, processor);
 }
@@ -76,9 +75,11 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
   const aiResults = new Map<string, Awaited<ReturnType<OpenAiClassifier["classifyAndExtract"]>>>();
   const aiTimings: Array<{ number: number; durationMs: number; success: boolean }> = [];
   const processor = options.classifier ? async (email: CommonEmail, preprocess: MailPreprocessor) => {
-    const processed = await preprocess(email.body);
+    let processed: PreprocessedMailBody;
+    try { processed = await preprocess(email.body, email.contentType); }
+    catch (error) { throw wrapAiFailure(error, "preprocessing"); }
     try {
-      if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "AI_LIMIT", retryable: false });
+      if (options.aiBudget && !options.aiBudget.tryConsume()) throw new MailProcessingError("AI呼び出し上限に達しました", { category: "temporary", code: "ai_call_limit", retryable: false, diagnostic: { stage: "ai_budget", diagnosticCode: "ai_call_limit", fields: [], retryable: false } });
       const aiStartedAt = Date.now();
       let aiSucceeded = false;
       try {
@@ -90,10 +91,7 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
         aiTimings.push({ number: aiTimings.length + 1, durationMs: Date.now() - aiStartedAt, success: aiSucceeded });
       }
     } catch (error) {
-      const ai = error as { category?: string; status?: number; retryable?: boolean; message?: string };
-      const category = ai.category === "rate_limit" || ai.category === "timeout" || ai.category === "temporary" ? "temporary" : ai.category === "authentication" || ai.category === "validation" ? "permanent" : "unknown";
-      const code = typeof ai.status === "number" ? `HTTP_${ai.status}` : ai.category;
-      throw new MailProcessingError("AI処理に失敗しました", { category, ...(code ? { code } : {}), retryable: ai.retryable === true && category === "temporary" });
+      throw wrapAiFailure(error, "openai_request");
     }
   } : undefined;
   const batch = await runMailBatch(async () => aiEmails, options.preprocess, options.concurrency ?? 3, options.retry, processor);
@@ -108,7 +106,7 @@ export async function runGraphMailBatchWithPersistence(client: GraphDeltaClient,
       const response = aiResults.get(item.messageId);
       if (!response) continue;
       try { await persistAiExtractionForEmail(prisma, item.mailboxId, item.messageId, response, item.processedBody ?? ""); }
-      catch { persistence.dbSaveFailureCount += 1; try { await recordAiProcessingFailure(prisma, item.messageId, "db", "AI抽出結果の保存に失敗しました"); } catch { /* 既存の保存失敗を隠さない */ } }
+      catch { persistence.dbSaveFailureCount += 1; try { await recordAiProcessingFailure(prisma, item.messageId, "db", formatSafeAiFailureDiagnostic({ stage: "db_persistence", diagnosticCode: "ai_extraction_persist_failed", fields: [], retryable: false })); } catch { /* 既存の保存失敗を隠さない */ } }
     }
   }
   const extractionPersistenceDurationMs = Date.now() - extractionPersistenceStartedAt;

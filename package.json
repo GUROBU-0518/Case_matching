@@ -17,6 +17,7 @@
     "batch": "node --experimental-strip-types src/db/mail-batch-cli.ts",
     "batch:db": "node --experimental-strip-types src/db/mail-batch-cli.ts",
     "batch:memory": "node --experimental-strip-types src/batch/mail-batch-cli.ts",
+    "db:migrate-price-ranges": "node --env-file-if-exists=.env --experimental-strip-types src/db/migrate-price-ranges-cli.ts",
     "graph:fetch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-mail-cli.ts",
     "graph:delta": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-delta-cli.ts",
       "graph:batch": "node --env-file-if-exists=.env --experimental-strip-types src/mail/graph-batch-cli.ts",
@@ -31,6 +32,9 @@
       ,"ai:restore-pending-single": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-single-cli.ts"
       ,"ai:restore-failed-single": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-failed-cli.ts"
       ,"ai:restore-pending": "node --env-file-if-exists=.env --experimental-strip-types src/ai/restore-stored-ai-cli.ts"
+      ,"ai:diagnose-failed": "node --env-file-if-exists=.env --experimental-strip-types src/ai/diagnose-failed-mail-cli.ts"
+      ,"ai:reprocess-failed": "node --env-file-if-exists=.env --experimental-strip-types src/ai/reprocess-failed-mail-cli.ts"
+      ,"ai:reprocess-failed-batch": "node --env-file-if-exists=.env --experimental-strip-types src/ai/reprocess-failed-mail-batch-cli.ts"
   },
   "engines": {
     "node": ">=20"

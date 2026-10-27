@@ -6,13 +6,14 @@ import type { StationDistanceMatch } from "../contracts/interfaces.ts";
 import { projectSchema, talentSchema } from "../domain/schemas.ts";
 import { getTalentRegistrationSince, parseTalentRegistrationPeriod } from "../domain/talent-filter.ts";
 import { matchesTalentSearch } from "../domain/talent-search.ts";
-import { matchesProjectSearch } from "../domain/project-search.ts";
+import { matchesProjectSearch, matchesProjectTalentPrice } from "../domain/project-search.ts";
 import { matchesProjectConditions } from "../domain/project-match-filter.ts";
 import { stationDistanceConfig } from "../domain/station-distance-config.ts";
 import { sortByStationDistance } from "../domain/station-match.ts";
 
 const require = createRequire(import.meta.url);
 const { Prisma } = require("../../node_modules/.prisma/client/index.js") as typeof import("@prisma/client");
+
 
 const defaultPort = 3000;
 
@@ -22,11 +23,17 @@ interface ProjectListItem {
   readonly summary: string;
   readonly location: string;
   readonly rate: string;
+  readonly unitPriceMin?: number | null;
+  readonly unitPriceMax?: number | null;
   readonly startDate: string;
   readonly requiredSkills: readonly string[];
 }
 
-type ApiProject = Project & { readonly id: string };
+type ApiProject = Project & {
+  readonly id: string;
+  readonly rateMin?: bigint | null;
+  readonly rateMax?: bigint | null;
+};
 type ApiTalent = Talent & { readonly id: string };
 type ApiMatchTalent = ApiTalent & { readonly stationMatch: StationDistanceMatch | null };
 
@@ -1254,13 +1261,33 @@ function projectSummary(project: ApiProject): ProjectListItem {
     summary: project.summary ?? "概要未設定",
     location: project.location ?? "勤務地未設定",
     rate: displayPriceRange(project.unitPriceMin, project.unitPriceMax),
+    unitPriceMin: project.unitPriceMin ?? null,
+    unitPriceMax: project.unitPriceMax ?? null,
     startDate: project.startDate ?? "開始時期未設定",
     requiredSkills: project.requiredSkills ?? []
   };
 }
 
+function formatProjectRate(project: ApiProject): string {
+  return project.unitPriceMin != null && project.unitPriceMax != null
+    ? `${project.unitPriceMin}～${project.unitPriceMax}万円`
+    : project.unitPriceMin != null
+      ? `${project.unitPriceMin}万円以上`
+      : project.unitPriceMax != null
+        ? `～${project.unitPriceMax}万円`
+        : project.rate ?? "単価不明";
+}
+
+function formatTalentRate(talent: Talent): string {
+  if (talent.desiredPriceMin != null && talent.desiredPriceMax != null) return `${talent.desiredPriceMin}～${talent.desiredPriceMax}万円`;
+  if (talent.desiredPriceMin != null) return `${talent.desiredPriceMin}万円以上`;
+  if (talent.desiredPriceMax != null) return `～${talent.desiredPriceMax}万円`;
+  return talent.desiredRate ?? "単価不明";
+}
+
 function talentResponse(record: { id: string } & Record<string, unknown>): ApiTalent {
-  return { id: record.id, ...talentSchema.parse(record) };
+  const talent = talentSchema.parse(record);
+  return { id: record.id, ...talent, desiredRate: formatTalentRate(talent) };
 }
 
 type StationDistanceRow = {
@@ -1575,7 +1602,7 @@ async function handleProjectByIdApi(id: string, url: URL, response: ServerRespon
     return;
   }
 
-  sendJson(response, 200, { project });
+  sendJson(response, 200, { project: { ...project, rate: formatProjectRate(project) } });
 }
 
 async function handleTalentsApi(url: URL, response: ServerResponse): Promise<void> {
@@ -1631,19 +1658,18 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     return;
   }
 
-  let project: {
-    location: string | null;
-    rate: string | null;
-    rateMin: bigint | null;
-    rateMax: bigint | null;
-    requiredSkills: string[];
-  } | null = null;
+  let project: (ApiProject & { readonly rateMin: bigint | null; readonly rateMax: bigint | null }) | null = null;
   let records: Array<{ id: string; createdAt: Date } & Record<string, unknown>>;
   try {
-    project = await getPrismaClient().project.findUnique({
-      where: { id: projectId },
-      select: { location: true, rate: true, rateMin: true, rateMax: true, requiredSkills: true }
-    });
+    const projectRecord = await getPrismaClient().project.findUnique({ where: { id: projectId } });
+    project = projectRecord
+      ? {
+          id: projectRecord.id,
+          ...projectSchema.parse(projectRecord),
+          rateMin: projectRecord.rateMin,
+          rateMax: projectRecord.rateMax
+        }
+      : null;
     if (!project) {
       sendJson(response, 404, { error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
       return;
@@ -1656,6 +1682,9 @@ async function handleProjectMatchesApi(projectId: string, url: URL, response: Se
     return;
   }
 
+  if (url.searchParams.get("priceFilter") === "1") {
+    records = records.filter((record) => matchesProjectTalentPrice(project, talentResponse(record)));
+  }
   let talents: ApiMatchTalent[];
   try {
     const matchedTalents = project?.location?.trim()

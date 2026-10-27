@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { findRetryCandidates, isEligibleForNextBatchRetry } from "../src/db/mail-repository.ts";
+import { describe, expect, it, vi } from "vitest";
+import { findRetryCandidates, isEligibleForNextBatchRetry, persistMailResult } from "../src/db/mail-repository.ts";
 
 describe("DB retry candidate search", () => {
   it("一時的失敗でMailMessage紐付きを候補として取得する", async () => {
@@ -25,5 +25,26 @@ describe("DB retry candidate search", () => {
       return [];
     } } };
     await expect(findRetryCandidates(fakePrisma as never, "b@example.com")).resolves.toEqual([]);
+  });
+});
+
+describe("safe AI failure diagnostic persistence", () => {
+  it("stores only stage, code, field names, status and retry flag; never the message body", async () => {
+    const upsert = vi.fn(async (args: unknown) => { expect(args).toBeDefined(); return {}; });
+    const mailCreate = vi.fn(async (args: unknown) => { expect(args).toBeDefined(); return { id: "mail-db-id" }; });
+    const tx = { mailMessage: { findUnique: vi.fn(async () => null), create: mailCreate }, aiProcessing: { upsert } };
+    const prisma = { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)) };
+    const email = { mailboxId: "box", messageId: "graph-id", subject: "subject", sender: "sender@example.invalid", receivedAt: new Date(), body: "private email body" };
+    const result = {
+      mailboxId: "box", messageId: "graph-id", success: false, status: "failed", attempts: 1, retryCount: 0,
+      errorCategory: "permanent", errorCode: "zod_validation_error", retryable: false, originalLength: 18, processedLength: 0,
+      error: "AI処理に失敗しました", diagnostic: { stage: "zod_validation", diagnosticCode: "zod_validation_error", fields: ["projects.0.priceMin"], httpStatus: 400, retryable: false },
+    };
+    await persistMailResult(prisma as never, email as never, result as never, { deferProcessingStatus: true });
+    const args = upsert.mock.calls[0]?.[0] as { create: { errorMessage: string; aiStatus: string } };
+    expect(JSON.parse(args.create.errorMessage)).toEqual(result.diagnostic);
+    expect(args.create.aiStatus).toBe("failed_permanent");
+    expect(args.create.errorMessage).not.toContain("private email body");
+    expect(mailCreate.mock.calls[0]?.[0]).not.toHaveProperty("data.processedBody");
   });
 });
